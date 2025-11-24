@@ -1,0 +1,134 @@
+use crate::types::{ControllerType, InputFrame};
+use anyhow::{Result, anyhow};
+use vigem_client::{Client, TargetId, Xbox360Wired, XGamepad, XButtons};
+
+pub struct Controller {
+    target: Option<Xbox360Wired<Client>>,
+    controller_type: Option<ControllerType>,
+}
+
+impl Controller {
+    pub fn new() -> Self {
+        Self {
+            target: None,
+            controller_type: None,
+        }
+    }
+
+    pub fn connect(&mut self, controller_type: ControllerType) -> Result<()> {
+        // 現在はXbox360のみサポート
+        if !matches!(controller_type, ControllerType::Xbox) {
+            return Err(anyhow!("DualShock4 is not yet supported"));
+        }
+
+        // ViGEmクライアントを初期化
+        let client = Client::connect().map_err(|e| anyhow!("Failed to connect to ViGEm: {:?}", e))?;
+        
+        // Xbox360コントローラーを作成
+        let mut target = Xbox360Wired::new(client, TargetId::XBOX360_WIRED);
+        
+        // プラグイン
+        target.plugin().map_err(|e| anyhow!("Failed to plugin Xbox controller: {:?}", e))?;
+        
+        // 準備完了まで待機
+        target.wait_ready().map_err(|e| anyhow!("Failed to wait ready: {:?}", e))?;
+
+        self.target = Some(target);
+        self.controller_type = Some(controller_type);
+
+        Ok(())
+    }
+
+    pub fn disconnect(&mut self) -> Result<()> {
+        if let Some(mut target) = self.target.take() {
+            target.unplug().map_err(|e| anyhow!("Failed to unplug controller: {:?}", e))?;
+        }
+
+        self.controller_type = None;
+
+        Ok(())
+    }
+
+    pub fn update_input(&mut self, frame: &InputFrame, invert_horizontal: bool) -> Result<()> {
+        // 方向入力を処理
+        let (up, down, left, right) = Self::parse_direction(frame.direction, invert_horizontal);
+        
+        let target = self.target.as_mut().ok_or_else(|| anyhow!("Controller not connected"))?;
+
+        // XGamepadを構築
+        let mut buttons_raw = 0u16;
+        
+        // D-Padの設定
+        if up { buttons_raw |= XButtons::UP; }
+        if down { buttons_raw |= XButtons::DOWN; }
+        if left { buttons_raw |= XButtons::LEFT; }
+        if right { buttons_raw |= XButtons::RIGHT; }
+
+        // ボタンの設定
+        for (button_name, &value) in &frame.buttons {
+            if value == 1 {
+                match button_name.as_str() {
+                    "A" | "punch" => buttons_raw |= XButtons::A,
+                    "B" | "kick" => buttons_raw |= XButtons::B,
+                    "X" | "jump" => buttons_raw |= XButtons::X,
+                    "Y" | "special" => buttons_raw |= XButtons::Y,
+                    "LB" => buttons_raw |= XButtons::LB,
+                    "RB" => buttons_raw |= XButtons::RB,
+                    "START" => buttons_raw |= XButtons::START,
+                    "BACK" => buttons_raw |= XButtons::BACK,
+                    _ => {}
+                }
+            }
+        }
+
+        let gamepad = XGamepad {
+            buttons: XButtons { raw: buttons_raw },
+            left_trigger: 0,
+            right_trigger: 0,
+            thumb_lx: 0,
+            thumb_ly: 0,
+            thumb_rx: 0,
+            thumb_ry: 0,
+        };
+
+        target.update(&gamepad).map_err(|e| anyhow!("Failed to update controller: {:?}", e))?;
+
+        Ok(())
+    }
+
+    fn parse_direction(direction: u8, invert_horizontal: bool) -> (bool, bool, bool, bool) {
+        let mut up = false;
+        let mut down = false;
+        let mut left = false;
+        let mut right = false;
+
+        match direction {
+            8 => up = true,        // 上
+            2 => down = true,      // 下
+            4 => left = true,      // 左
+            6 => right = true,     // 右
+            7 => { up = true; left = true; }   // 左上
+            9 => { up = true; right = true; }  // 右上
+            1 => { down = true; left = true; } // 左下
+            3 => { down = true; right = true; } // 右下
+            _ => {} // 5 or その他: 中立
+        }
+
+        // 左右反転
+        if invert_horizontal {
+            std::mem::swap(&mut left, &mut right);
+        }
+
+        (up, down, left, right)
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.target.is_some()
+    }
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        let _ = self.disconnect();
+    }
+}

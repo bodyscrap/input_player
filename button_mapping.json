@@ -1,0 +1,14 @@
+{
+  "xbox": {
+    "punch": "A",
+    "kick": "B",
+    "jump": "X",
+    "special": "Y"
+  },
+  "dualshock4": {
+    "punch": "Cross",
+    "kick": "Circle",
+    "jump": "Square",
+    "special": "Triangle"
+  }
+}
