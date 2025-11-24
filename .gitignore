@@ -28,3 +28,7 @@ dist
 # Editor directories
 .vscode/*
 !.vscode/extensions.json
+
+# Sample data and resources
+sample_input/
+_resource/

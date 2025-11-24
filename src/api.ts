@@ -61,4 +61,18 @@ export const api = {
   async updateManualInput(direction: number, buttons: Record<string, number>): Promise<void> {
     return await invoke('update_manual_input', { direction, buttons });
   },
+
+  // CSV button names
+  async getCsvButtonNames(path: string): Promise<string[]> {
+    return await invoke('get_csv_button_names', { path });
+  },
+
+  // FPS operations
+  async setFps(fps: number): Promise<void> {
+    return await invoke('set_fps', { fps });
+  },
+
+  async getFps(): Promise<number> {
+    return await invoke('get_fps');
+  },
 };

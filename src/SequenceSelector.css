@@ -1,0 +1,266 @@
+.sequence-selector {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.selector-window {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  color: #333;
+}
+
+.selector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #ddd;
+  background: #f5f5f5;
+  border-radius: 8px 8px 0 0;
+}
+
+.selector-header h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.selector-content {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.slot-selection {
+  margin-bottom: 20px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #dee2e6;
+}
+
+.slot-selection h4 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  color: #555;
+  font-weight: 600;
+}
+
+.slot-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.slot-btn {
+  flex: 1;
+  padding: 10px;
+  border: 2px solid #dee2e6;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  color: #333;
+}
+
+.slot-btn:hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.slot-btn.selected {
+  background: #007bff;
+  border-color: #0056b3;
+  color: white;
+}
+
+.slot-btn.selected:hover {
+  background: #0056b3;
+}
+
+.slot-btn.occupied {
+  border-color: #28a745;
+}
+
+.slot-btn.selected.occupied {
+  background: #0056b3;
+  border-color: #004085;
+}
+
+.compatibility-message {
+  padding: 12px;
+  border-radius: 4px;
+  margin: 12px 0;
+  font-weight: 500;
+}
+
+.compatibility-message.compatible {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.compatibility-message.incompatible {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.path-section {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.path-section label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 300px;
+  color: #333;
+  font-weight: 500;
+}
+
+.path-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.browse-button {
+  padding: 6px 12px;
+  background: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  min-width: 36px;
+  height: 32px;
+}
+
+.browse-button:hover {
+  background: #1976d2;
+}
+
+.button-list {
+  margin: 16px 0;
+}
+
+.button-list h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #555;
+}
+
+.button-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button-tag {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.button-tag.mapped {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.button-tag.unmapped {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.mapping-info {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  border: 1px solid #dee2e6;
+}
+
+.mapping-info h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #555;
+}
+
+.mapping-info p {
+  margin: 0;
+  color: #666;
+  font-size: 13px;
+}
+
+.selector-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #ddd;
+  background: #f5f5f5;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-radius: 0 0 8px 8px;
+}
+
+.load-button {
+  padding: 8px 24px;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.load-button:hover:not(:disabled) {
+  background: #218838;
+}
+
+.load-button:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.cancel-button {
+  padding: 8px 24px;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.cancel-button:hover {
+  background: #5a6268;
+}
