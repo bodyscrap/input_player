@@ -1,0 +1,2 @@
+# input_player
+input analyzerで解析した入力履歴をvigem-clientを使って再生するRustアプリケーション
