@@ -1,12 +1,12 @@
 {
   "xbox": {
-    "btn_a2": "button4",
-    "btn_start": "button10",
-    "btn_reset": "button12",
-    "btn_b": "button6",
     "btn_menu": "button9",
+    "btn_reset": "button12",
+    "btn_a1": "button3",
+    "btn_b": "button6",
+    "btn_start": "button10",
     "btn_w": "button1",
-    "btn_a1": "button3"
+    "btn_a2": "button4"
   },
   "dualshock4": {}
 }
