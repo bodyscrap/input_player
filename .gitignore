@@ -32,3 +32,19 @@ dist
 # Sample data and resources
 sample_input/
 _resource/
+
+# Temporary sequence files
+temp_new_sequence_*.csv
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tauri build output
+src-tauri/target/
+src-tauri/WixTools/
+
+# Application config (may contain user-specific settings)
+# Uncomment if you want to ignore user configs
+# config/button_mapping.json

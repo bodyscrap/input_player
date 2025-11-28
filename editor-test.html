@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Editor Test</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        background: #1e1e1e;
+        color: #0f0;
+        font-family: monospace;
+      }
+      .info {
+        background: rgba(0, 255, 0, 0.1);
+        padding: 10px;
+        margin: 10px 0;
+        border: 1px solid #0f0;
+        border-radius: 4px;
+      }
+      button {
+        background: #0f0;
+        color: #000;
+        border: none;
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+        margin: 5px;
+      }
+      button:hover {
+        background: #0d0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Editor Window Test</h1>
+    
+    <div class="info">
+      <h3>Window Information</h3>
+      <p id="url"></p>
+      <p id="search"></p>
+      <p id="csvPath"></p>
+    </div>
+
+    <div class="info">
+      <h3>Interaction Test</h3>
+      <button onclick="testClick()">Click Test</button>
+      <button onclick="closeWindow()">Close Window</button>
+      <p id="clickCount">Clicks: 0</p>
+    </div>
+
+    <div class="info">
+      <h3>Console</h3>
+      <div id="console"></div>
+    </div>
+
+    <script>
+      let clicks = 0;
+      const consoleDiv = document.getElementById('console');
+
+      function log(msg) {
+        const p = document.createElement('p');
+        p.textContent = new Date().toLocaleTimeString() + ': ' + msg;
+        consoleDiv.appendChild(p);
+        console.log(msg);
+      }
+
+      function testClick() {
+        clicks++;
+        document.getElementById('clickCount').textContent = 'Clicks: ' + clicks;
+        log('Button clicked! Count: ' + clicks);
+      }
+
+      async function closeWindow() {
+        log('Attempting to close window...');
+        try {
+          const { getCurrentWindow } = await import('@tauri-apps/api/window');
+          await getCurrentWindow().close();
+          log('Close command sent');
+        } catch (error) {
+          log('Error closing window: ' + error);
+        }
+      }
+
+      // Display URL info
+      const params = new URLSearchParams(window.location.search);
+      const encodedPath = params.get('csvPath');
+      
+      document.getElementById('url').textContent = 'URL: ' + window.location.href;
+      document.getElementById('search').textContent = 'Search: ' + (window.location.search || '(empty)');
+      
+      if (encodedPath) {
+        try {
+          const decoded = atob(encodedPath);
+          document.getElementById('csvPath').textContent = 'CSV Path: ' + decoded;
+          log('CSV path decoded successfully');
+        } catch (e) {
+          document.getElementById('csvPath').textContent = 'CSV Path: (decode failed)';
+          log('Failed to decode CSV path: ' + e);
+        }
+      } else {
+        document.getElementById('csvPath').textContent = 'CSV Path: (not found)';
+        log('No csvPath parameter');
+      }
+
+      log('Test page loaded');
+    </script>
+  </body>
+</html>

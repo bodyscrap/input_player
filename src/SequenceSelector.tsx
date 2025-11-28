@@ -5,7 +5,7 @@ import "./SequenceSelector.css";
 
 interface SequenceSelectorProps {
   onClose: () => void;
-  onSelect: (csvPath: string, targetSlot: number) => void;
+  onSelect: (csvPath: string, targetSlot: number, isCompatible: boolean) => void;
   availableButtons: string[];
   targetSlot: number | null;
   currentSlots: (string | null)[];
@@ -18,38 +18,9 @@ function SequenceSelector({ onClose, onSelect, availableButtons, targetSlot, cur
   const [isCompatible, setIsCompatible] = useState(false);
   const [message, setMessage] = useState("");
 
-  const checkCompatibility = async () => {
-    if (!csvPath) {
-      setMessage("ファイルを選択してください");
-      return;
-    }
-    try {
-      const buttons = await api.getCsvButtonNames(csvPath);
-      setCsvButtons(buttons);
-      
-      // CSVのボタンがすべてマッピング済みかチェック
-      const unmappedButtons = buttons.filter(btn => !availableButtons.includes(btn));
-      
-      if (unmappedButtons.length === 0 && buttons.length > 0) {
-        setIsCompatible(true);
-        setMessage(`✓ このシーケンスは再生可能です (${buttons.length}個のボタン)`);
-      } else if (buttons.length === 0) {
-        setIsCompatible(false);
-        setMessage("ボタンが見つかりませんでした");
-      } else {
-        setIsCompatible(false);
-        setMessage(`✗ マッピングされていないボタン: ${unmappedButtons.join(", ")}`);
-      }
-    } catch (error) {
-      setIsCompatible(false);
-      setMessage(`エラー: ${error}`);
-      setCsvButtons([]);
-    }
-  };
-
   const handleLoad = () => {
-    if (isCompatible && csvPath) {
-      onSelect(csvPath, selectedSlot);
+    if (csvPath) {
+      onSelect(csvPath, selectedSlot, isCompatible);
       onClose();
     }
   };
@@ -64,19 +35,7 @@ function SequenceSelector({ onClose, onSelect, availableButtons, targetSlot, cur
 
         <div className="selector-content">
           <div className="slot-selection">
-            <h4>ロード先スロット:</h4>
-            <div className="slot-buttons">
-              {[0, 1, 2, 3].map((i) => (
-                <button
-                  key={i}
-                  onClick={() => setSelectedSlot(i)}
-                  className={`slot-btn ${selectedSlot === i ? 'selected' : ''} ${currentSlots[i] ? 'occupied' : 'empty'}`}
-                  title={currentSlots[i] || `スロット${i + 1}`}
-                >
-                  {i + 1} {currentSlots[i] && '📄'}
-                </button>
-              ))}
-            </div>
+            <span>スロット {selectedSlot + 1}</span>
           </div>
           
           <div className="path-section">
@@ -96,10 +55,11 @@ function SequenceSelector({ onClose, onSelect, availableButtons, targetSlot, cur
                 });
                 if (file) {
                   setCsvPath(file);
-                  // ファイル選択後に自動で互換性チェック
+                  // ファイル選択後に自動で互換性チェック（sequenceButtonsのみ）
                   try {
                     const buttons = await api.getCsvButtonNames(file);
                     setCsvButtons(buttons);
+                    // CSVに含まれるボタンのうち、シーケンス用ボタンに含まれないものをチェック
                     const unmappedButtons = buttons.filter(btn => !availableButtons.includes(btn));
                     if (unmappedButtons.length === 0 && buttons.length > 0) {
                       setIsCompatible(true);
@@ -109,7 +69,7 @@ function SequenceSelector({ onClose, onSelect, availableButtons, targetSlot, cur
                       setMessage("ボタンが見つかりませんでした");
                     } else {
                       setIsCompatible(false);
-                      setMessage(`✗ マッピングされていないボタン: ${unmappedButtons.join(", ")}`);
+                      setMessage(`✗ シーケンス用に設定されていないボタン: ${unmappedButtons.join(", ")}`);
                     }
                   } catch (error) {
                     setIsCompatible(false);
@@ -119,18 +79,16 @@ function SequenceSelector({ onClose, onSelect, availableButtons, targetSlot, cur
                 }
               }} className="browse-button">📁</button>
             </label>
-            <button onClick={checkCompatibility}>互換性チェック</button>
           </div>
-
-          {message && (
-            <div className={`compatibility-message ${isCompatible ? 'compatible' : 'incompatible'}`}>
-              {message}
-            </div>
-          )}
 
           {csvButtons.length > 0 && (
             <div className="button-list">
-              <h4>CSVのボタン一覧:</h4>
+              <div className="button-list-header">
+                <h4>CSVのボタン一覧:</h4>
+                <span className={`compatibility-status ${isCompatible ? 'status-ok' : 'status-error'}`}>
+                  {isCompatible ? '✓ 再生可能' : '✗ マッピングの修正が必要です'}
+                </span>
+              </div>
               <div className="button-tags">
                 {csvButtons.map((btn) => {
                   const isMapped = availableButtons.includes(btn);
@@ -161,7 +119,7 @@ function SequenceSelector({ onClose, onSelect, availableButtons, targetSlot, cur
         </div>
 
         <div className="selector-footer">
-          <button onClick={handleLoad} disabled={!isCompatible} className="load-button">
+          <button onClick={handleLoad} disabled={!csvPath} className="load-button">
             読み込み
           </button>
           <button onClick={onClose} className="cancel-button">キャンセル</button>

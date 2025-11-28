@@ -3,6 +3,7 @@ import "./App.css";
 import { api } from "./api";
 import ButtonMappingEditor from "./ButtonMappingEditor";
 import SequenceSelector from "./SequenceSelector";
+import SequenceEditor from "./SequenceEditor";
 
 function App() {
   // Controller state
@@ -14,7 +15,6 @@ function App() {
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
   const [invertHorizontal, setInvertHorizontal] = useState(false);
-  const [startPlaybackInverted, setStartPlaybackInverted] = useState(false); // 再生開始時の左右反転状態
   const [currentFrame, setCurrentFrame] = useState(0);
   const [totalFrames, setTotalFrames] = useState(0);
 
@@ -28,14 +28,28 @@ function App() {
   const [showMappingEditor, setShowMappingEditor] = useState(false);
   const [useMappingLabels, setUseMappingLabels] = useState(false);
   const [buttonMapping, setButtonMapping] = useState<Record<string, string>>({});
-  const [availableButtons, setAvailableButtons] = useState<string[]>([]);
+  const [sequenceButtons, setSequenceButtons] = useState<string[]>([]); // シーケンスで使用するボタン
   const [activeTestButton, setActiveTestButton] = useState<string | null>(null); // マッピングエディタの試用ボタン
   
   // Sequence selector state
   const [showSequenceSelector, setShowSequenceSelector] = useState(false);
-  const [sequenceSlots, setSequenceSlots] = useState<(string | null)[]>([null, null, null, null]);
+  const [sequenceSlots, setSequenceSlots] = useState<(string | null)[]>(Array(12).fill(null));
+  const [slotCompatibility, setSlotCompatibility] = useState<boolean[]>(Array(12).fill(true));
   const [loadingSlot, setLoadingSlot] = useState<number | null>(null);
   const [playingSlot, setPlayingSlot] = useState<number | null>(null);
+  const [loopPlayback, setLoopPlayback] = useState(false);
+  
+  // Sequence chain state
+  const [sequenceChain, setSequenceChain] = useState<number[]>([]); // スロット番号の配列
+  const [isPlayingChain, setIsPlayingChain] = useState(false);
+  const [currentChainIndex, setCurrentChainIndex] = useState(0);
+  
+  // Sequence editor state (modal)
+  const [showSequenceEditor, setShowSequenceEditor] = useState(false);
+  const [editingSlotPath, setEditingSlotPath] = useState<string | null>(null);
+  const [currentPlayingRow, setCurrentPlayingRow] = useState<number>(-1);
+  
+
   
   // Refs to hold the latest values for use in interval
   const povDirectionRef = useRef(povDirection);
@@ -76,17 +90,41 @@ function App() {
         setCurrentFrame(current);
         setTotalFrames(total);
         
-        // 最後まで再生したら自動停止
+        // エディタ表示中は再生中のフレーム番号も取得
+        if (showSequenceEditor) {
+          try {
+            const playingFrame = await api.getCurrentPlayingFrame();
+            setCurrentPlayingRow(playingFrame);
+          } catch (error) {
+            // エラーは無視（再生中でない場合など）
+          }
+        }
+        
+        // 最後まで再生したら自動停止またはループ
         if (current >= total && total > 0) {
           await api.stopPlayback();
-          setIsPlaying(false);
-          setPlayingSlot(null);
+          
+          if (isPlayingChain) {
+            // チェーン再生中: 次のシーケンスへ
+            setIsPlaying(false);
+            setPlayingSlot(null);
+            // playChainSequenceが次を再生する
+          } else if (loopPlayback) {
+            // 単独再生でループ: 最初から再開
+            await api.startPlayback();
+          } else {
+            // 単独再生で通常: 停止
+            setIsPlaying(false);
+            setPlayingSlot(null);
+          }
         }
+      } else {
+        // 再生停止時はハイライトをリセットしない（停止位置を保持）
       }
     }, 100);
 
     return () => clearInterval(interval);
-  }, [isPlaying]);
+  }, [isPlaying, loopPlayback, isPlayingChain, showSequenceEditor]);
 
   // Send manual input continuously while connected
   useEffect(() => {
@@ -155,6 +193,15 @@ function App() {
     // 再生中に変更しても再生中の動作には影響しない
   };
 
+  const handleLoopToggle = async (checked: boolean) => {
+    setLoopPlayback(checked);
+    try {
+      await api.setLoopPlayback(checked);
+    } catch (error) {
+      console.error("ループ設定エラー:", error);
+    }
+  };
+
   const povDirections = [
     { label: "↖", value: 7 },
     { label: "↑", value: 8 },
@@ -181,11 +228,17 @@ function App() {
         csvButtons.push(csvButton);
       });
       setButtonMapping(reverseMap);
-      setAvailableButtons(csvButtons);
+      
+      // シーケンス用ボタンを設定（指定がなければ全ボタン）
+      if (mapping.sequenceButtons && mapping.sequenceButtons.length > 0) {
+        setSequenceButtons(mapping.sequenceButtons);
+      } else {
+        setSequenceButtons(csvButtons);
+      }
     } catch (error) {
       console.log("マッピング読み込みエラー:", error);
       setButtonMapping({});
-      setAvailableButtons([]);
+      setSequenceButtons([]);
     }
   };
 
@@ -196,16 +249,21 @@ function App() {
   };
 
   // シーケンスを選択
-  const handleSequenceSelect = async (csvPath: string, targetSlot: number) => {
+  const handleSequenceSelect = async (csvPath: string, targetSlot: number, isCompatible: boolean) => {
     try {
       const frameCount = await api.loadInputFile(csvPath);
       const newSlots = [...sequenceSlots];
       newSlots[targetSlot] = csvPath;
       setSequenceSlots(newSlots);
+      
+      const newCompatibility = [...slotCompatibility];
+      newCompatibility[targetSlot] = isCompatible;
+      setSlotCompatibility(newCompatibility);
+      
       setTotalFrames(frameCount);
-      alert(`スロット${targetSlot + 1}に${frameCount}フレームを読み込みました`);
+      console.log(`✓ スロット${targetSlot + 1}に${frameCount}フレームを読み込みました (互換性: ${isCompatible ? '✓' : '✗'})`);
     } catch (error) {
-      alert(`読み込みエラー: ${error}`);
+      console.error(`読み込みエラー:`, error);
     }
   };
 
@@ -214,20 +272,24 @@ function App() {
     const csvPath = sequenceSlots[slotIndex];
     if (!csvPath) return;
     
+    // 互換性チェック
+    if (!slotCompatibility[slotIndex]) {
+      console.log(`✗ スロット${slotIndex + 1}は互換性がないため再生できません`);
+      return;
+    }
+    
     try {
       const frameCount = await api.loadInputFile(csvPath);
       setTotalFrames(frameCount);
       setCurrentFrame(0);
       
-      // 再生開始時の左右反転状態を保存
-      setStartPlaybackInverted(invertHorizontal);
       await api.setInvertHorizontal(invertHorizontal);
       
       await api.startPlayback();
       setIsPlaying(true);
       setPlayingSlot(slotIndex);
     } catch (error) {
-      alert(`再生エラー: ${error}`);
+      console.error(`再生エラー:`, error);
     }
   };
 
@@ -238,10 +300,144 @@ function App() {
       setIsPlaying(false);
       setCurrentFrame(0);
       setPlayingSlot(null);
+      setIsPlayingChain(false);
     } catch (error) {
-      alert(`停止エラー: ${error}`);
+      console.error(`停止エラー:`, error);
     }
   };
+
+  // シーケンスチェーン: スロットをチェーンに追加（同一スロット複数回OK）
+  const addToChain = (slotIndex: number) => {
+    if (sequenceChain.length < 20) {
+      setSequenceChain([...sequenceChain, slotIndex]);
+    }
+  };
+
+  // シーケンスチェーン: 選択した要素を削除
+  const removeFromChain = (index: number) => {
+    setSequenceChain(sequenceChain.filter((_, i) => i !== index));
+  };
+
+  // シーケンスチェーン: クリア
+  const clearChain = () => {
+    setSequenceChain([]);
+  };
+
+  // シーケンスチェーン: 並び替え
+  const moveChainItem = (fromIndex: number, toIndex: number) => {
+    const newChain = [...sequenceChain];
+    const [moved] = newChain.splice(fromIndex, 1);
+    newChain.splice(toIndex, 0, moved);
+    setSequenceChain(newChain);
+  };
+
+  // スロットをクリア
+  const clearSlot = (slotIndex: number) => {
+    const newSlots = [...sequenceSlots];
+    newSlots[slotIndex] = null;
+    setSequenceSlots(newSlots);
+    
+    const newCompatibility = [...slotCompatibility];
+    newCompatibility[slotIndex] = true;
+    setSlotCompatibility(newCompatibility);
+    
+    console.log(`✓ スロット${slotIndex + 1}をクリアしました`);
+  };
+
+  // 新規シーケンスを作成
+  const createNewSequence = async () => {
+    if (sequenceButtons.length === 0) {
+      console.error("シーケンス用ボタンが設定されていません");
+      return null;
+    }
+
+    try {
+      // 一時ファイルパスを生成
+      const tempPath = `temp_new_sequence_${Date.now()}.csv`;
+      
+      // 初期フレームデータ（中立、1フレーム）
+      // シーケンス用ボタンのみを含む
+      const initialFrames = [{
+        duration: 1,
+        direction: 5,
+        buttons: Object.fromEntries(sequenceButtons.map(btn => [btn, 0]))
+      }];
+
+      await api.saveFramesForEdit(tempPath, initialFrames);
+      return tempPath;
+    } catch (error) {
+      console.error("新規シーケンス作成エラー:", error);
+      return null;
+    }
+  };
+
+  // シーケンスチェーン: 再生
+  const playChain = async () => {
+    if (sequenceChain.length === 0) return;
+    
+    setIsPlayingChain(true);
+    setCurrentChainIndex(0);
+    await playChainSequence(0);
+  };
+
+  // シーケンスチェーン: 指定インデックスのシーケンスを再生
+  const playChainSequence = async (chainIndex: number) => {
+    if (chainIndex >= sequenceChain.length) {
+      // チェーン終了
+      if (loopPlayback) {
+        // ループ再生: 先頭から再開
+        setCurrentChainIndex(0);
+        await playChainSequence(0);
+      } else {
+        // 通常再生: 停止
+        setIsPlayingChain(false);
+        setIsPlaying(false);
+        setPlayingSlot(null);
+      }
+      return;
+    }
+
+    const slotIndex = sequenceChain[chainIndex];
+    const csvPath = sequenceSlots[slotIndex];
+    
+    if (!csvPath || !slotCompatibility[slotIndex]) {
+      // スロットが空または互換性がない場合は次へスキップ
+      if (!csvPath) {
+        console.log(`✗ スロット${slotIndex + 1}が空のためスキップ`);
+      } else {
+        console.log(`✗ スロット${slotIndex + 1}は互換性がないためスキップ`);
+      }
+      setCurrentChainIndex(chainIndex + 1);
+      await playChainSequence(chainIndex + 1);
+      return;
+    }
+
+    try {
+      const frameCount = await api.loadInputFile(csvPath);
+      setTotalFrames(frameCount);
+      setCurrentFrame(0);
+      setCurrentChainIndex(chainIndex);
+      
+      await api.setInvertHorizontal(invertHorizontal);
+      await api.startPlayback();
+      setIsPlaying(true);
+      setPlayingSlot(slotIndex);
+    } catch (error) {
+      console.error(`チェーン再生エラー (index ${chainIndex}):`, error);
+      // エラーが発生しても次のシーケンスへ
+      setCurrentChainIndex(chainIndex + 1);
+      await playChainSequence(chainIndex + 1);
+    }
+  };
+
+  // シーケンスチェーン: 次のシーケンスへ進む
+  useEffect(() => {
+    if (isPlayingChain && !isPlaying && currentChainIndex < sequenceChain.length) {
+      // 現在のシーケンスが終了したら次へ
+      const nextIndex = currentChainIndex + 1;
+      playChainSequence(nextIndex);
+    }
+  }, [isPlaying, isPlayingChain, currentChainIndex]);
 
   // 初回マウント時にマッピングを読み込む
   useEffect(() => {
@@ -287,7 +483,7 @@ function App() {
           </div>
         </div>
 
-        {/* POV / D-pad とシーケンス再生 */}
+        {/* POV / D-pad とボタン */}
         <div className="input-controls-row">
           <div className="pov-section">
             <h3>POV (方向パッド)</h3>
@@ -311,9 +507,75 @@ function App() {
               </div>
             </div>
 
-          {/* シーケンス再生 */}
-          <div className="sequence-section">
-            <div className="sequence-header">
+          {/* Buttons */}
+          <div className="buttons-section">
+            <div className="buttons-header">
+              <h3>ボタン (1-10) <span className="button-hint">マウスを押している間だけON</span></h3>
+              <label className="mapping-display-checkbox">
+                <input
+                  type="checkbox"
+                  checked={useMappingLabels}
+                  onChange={(e) => setUseMappingLabels(e.target.checked)}
+                />
+                マッピング名で表示
+              </label>
+            </div>
+            <div className="button-grid">
+              {buttons.map((btn) => {
+                const buttonKey = `button${btn}`;
+                const csvButtonName = buttonMapping[buttonKey];
+                const isMapped = !!csvButtonName;
+                const isSequenceButton = csvButtonName && sequenceButtons.includes(csvButtonName);
+                
+                let label = `ボタン ${btn}`;
+                
+                // マッピング名表示モードの場合
+                if (useMappingLabels && isMapped) {
+                  // マッピングされている場合は常にCSV名を表示
+                  label = `${csvButtonName} (${btn})`;
+                } else {
+                  // デフォルトラベル
+                  if (btn === 1) label = "A (1)";
+                  else if (btn === 2) label = "B (2)";
+                  else if (btn === 3) label = "X (3)";
+                  else if (btn === 4) label = "Y (4)";
+                  else if (btn === 5) label = "LB (5)";
+                  else if (btn === 6) label = "RB (6)";
+                  else if (btn === 7) label = "LT (7)";
+                  else if (btn === 8) label = "RT (8)";
+                  else if (btn === 9) label = "BACK (9)";
+                  else if (btn === 10) label = "START (10)";
+                  else if (btn === 11) label = "LS (11)";
+                  else if (btn === 12) label = "RS (12)";
+                }
+                
+                // クラス名を決定
+                // マッピングされている場合のみ色分け
+                const buttonClasses = [
+                  activeButton === btn ? "active" : "",
+                  isMapped ? (isSequenceButton ? "sequence-button" : "manual-only-button") : ""
+                ].filter(Boolean).join(" ");
+                
+                return (
+                  <button
+                    key={btn}
+                    className={buttonClasses}
+                    onMouseDown={() => setActiveButton(btn)}
+                    onMouseUp={() => setActiveButton(null)}
+                    onMouseLeave={() => setActiveButton(null)}
+                    disabled={isPlaying}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* シーケンス再生 */}
+        <div className="sequence-section section">
+          <div className="sequence-header">
               <h3>シーケンス再生</h3>
               <span className="frame-counter">
                 {isPlaying ? `${currentFrame} / ${totalFrames}` : '0 / 0'} フレーム
@@ -321,16 +583,9 @@ function App() {
             </div>
             <div className="sequence-controls">
               <div className="sequence-buttons">
-                <button 
-                  onClick={() => openSequenceSelector(0)} 
-                  className="btn-sequence"
-                  title="入力履歴読込"
-                  disabled={isPlaying}
-                >
-                  📂
-                </button>
-                {[0, 1, 2, 3].map((i) => {
+                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => {
                   const isLoaded = sequenceSlots[i] !== null;
+                  const isCompatible = slotCompatibility[i];
                   const isThisSlotPlaying = isPlaying && playingSlot === i;
                   const isOtherSlotPlaying = isPlaying && playingSlot !== i;
                   const progress = isThisSlotPlaying && totalFrames > 0 ? (currentFrame / totalFrames) * 100 : 0;
@@ -342,21 +597,47 @@ function App() {
                         if (isThisSlotPlaying) {
                           // 再生中のスロットを再度押すと停止
                           stopSequence();
-                        } else if (sequenceSlots[i]) {
-                          // 読み込み済みのスロットを押すと再生
+                        } else if (sequenceSlots[i] && isCompatible) {
+                          // 読み込み済みで互換性があるスロットを押すと再生
                           playSequence(i);
+                        } else if (sequenceSlots[i] && !isCompatible) {
+                          // 互換性のないスロットは何もしない
+                          console.log(`✗ スロット${i + 1}は互換性がないため再生できません`);
                         } else {
                           // 空のスロットを押すとファイル選択
                           openSequenceSelector(i);
                         }
                       }}
+                      onContextMenu={async (e) => {
+                        e.preventDefault();
+                        if (e.ctrlKey && isLoaded) {
+                          // Ctrl+右クリックで破棄
+                          clearSlot(i);
+                        } else if (isLoaded) {
+                          // スロットが割り当て済みの場合は編集
+                          setEditingSlotPath(sequenceSlots[i]);
+                          setShowSequenceEditor(true);
+                        } else {
+                          // 空のスロットの右クリックは新規作成
+                          const tempPath = await createNewSequence();
+                          if (tempPath) {
+                            setEditingSlotPath(tempPath);
+                            setShowSequenceEditor(true);
+                          }
+                        }
+                      }}
                       className={`btn-sequence ${
                         isThisSlotPlaying ? 'playing' : 
+                        isLoaded && !isCompatible ? 'incompatible' :
                         isLoaded ? 'loaded' : 
                         'empty'
                       }`}
                       disabled={isOtherSlotPlaying}
-                      title={sequenceSlots[i] || `スロット${i + 1}`}
+                      title={
+                        sequenceSlots[i] 
+                          ? `${sequenceSlots[i].replace(/\\/g, '/').split('/').pop()?.replace(/\.csv$/i, '') || 'Unknown'}\n${isCompatible ? '(右クリック: 編集 / Ctrl+右クリック: 破棄)' : '(互換性なし - 再生不可)\n(右クリック: 編集 / Ctrl+右クリック: 破棄)'}` 
+                          : `スロット${i + 1}\n(左クリック: 選択 / 右クリック: 新規作成)`
+                      }
                       style={{
                         '--progress': `${progress}%`
                       } as React.CSSProperties}
@@ -367,70 +648,134 @@ function App() {
                 })}
               </div>
             </div>
-            <label className="invert-control">
-              <input
-                type="checkbox"
-                checked={invertHorizontal}
-                onChange={(e) => handleInvertToggle(e.target.checked)}
-              />
-              左右反転
-            </label>
-          </div>
+            <div className="sequence-options">
+              <label className="invert-control">
+                <input
+                  type="checkbox"
+                  checked={invertHorizontal}
+                  onChange={(e) => handleInvertToggle(e.target.checked)}
+                />
+                左右反転
+              </label>
+              <label className="loop-control">
+                <input
+                  type="checkbox"
+                  checked={loopPlayback}
+                  onChange={(e) => handleLoopToggle(e.target.checked)}
+                />
+                ループ再生
+              </label>
+            </div>
         </div>
 
-            {/* Buttons */}
-            <div className="buttons-section">
-              <div className="buttons-header">
-                <h3>ボタン (1-10)</h3>
-                <label className="mapping-display-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={useMappingLabels}
-                    onChange={(e) => setUseMappingLabels(e.target.checked)}
-                  />
-                  マッピング名で表示
-                </label>
+        {/* シーケンスチェーン */}
+        <div className="chain-section section">
+          <div className="chain-header">
+            <h3>シーケンスチェーン編集</h3>
+            <div className="chain-controls">
+              <button 
+                onClick={playChain} 
+                className="btn-chain-play"
+                disabled={sequenceChain.length === 0 || isPlaying}
+              >
+                ▶ 再生
+              </button>
+              <button 
+                onClick={clearChain} 
+                className="btn-chain-clear"
+                disabled={sequenceChain.length === 0}
+              >
+                🗑 クリア
+              </button>
+            </div>
+          </div>
+          
+          {/* チェーン追加用ボタン */}
+          <div className="chain-add-buttons">
+            <p className="chain-hint">クリックでチェーンに追加 (最大20個、同じスロット複数回OK)</p>
+            <div className="sequence-buttons">
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => {
+                const isLoaded = sequenceSlots[i] !== null;
+                const isCompatible = slotCompatibility[i];
+                
+                return (
+                  <button
+                    key={`chain-add-${i}`}
+                    onClick={() => {
+                      if (isLoaded && sequenceChain.length < 20) {
+                        addToChain(i);
+                      }
+                    }}
+                    className={`btn-sequence ${
+                      isLoaded && !isCompatible ? 'incompatible' :
+                      isLoaded ? 'loaded' : 
+                      'empty'
+                    }`}
+                    disabled={!isLoaded || sequenceChain.length >= 20}
+                    title={
+                      sequenceSlots[i] 
+                        ? `${sequenceSlots[i].replace(/\\/g, '/').split('/').pop()?.replace(/\.csv$/i, '') || 'Unknown'}\n(クリックでチェーンに追加)` 
+                        : `スロット${i + 1}\n(空)`
+                    }
+                  >
+                    {i + 1}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* チェーン表示エリア */}
+          <div className="chain-display-area">
+            <h4>現在のチェーン ({sequenceChain.length}/20)</h4>
+            {sequenceChain.length === 0 ? (
+              <div className="chain-empty-message">
+                上のボタンをクリックしてチェーンを作成
               </div>
-              <p className="button-hint">マウスを押している間だけON</p>
-              <div className="button-grid">
-                {buttons.map((btn) => {
-                  const buttonKey = `button${btn}`;
-                  let label = `ボタン ${btn}`;
-                  
-                  // マッピングを使用する場合、CSVボタン名を表示
-                  if (useMappingLabels && buttonMapping[buttonKey]) {
-                    label = `${buttonMapping[buttonKey]} (${btn})`;
-                  } else {
-                    // デフォルトラベル
-                    if (btn === 1) label = "A (1)";
-                    else if (btn === 2) label = "B (2)";
-                    else if (btn === 3) label = "X (3)";
-                    else if (btn === 4) label = "Y (4)";
-                    else if (btn === 5) label = "LB (5)";
-                    else if (btn === 6) label = "RB (6)";
-                    else if (btn === 7) label = "LT (7)";
-                    else if (btn === 8) label = "RT (8)";
-                    else if (btn === 9) label = "BACK (9)";
-                    else if (btn === 10) label = "START (10)";
-                    else if (btn === 11) label = "LS (11)";
-                    else if (btn === 12) label = "RS (12)";
-                  }
+            ) : (
+              <div className="chain-buttons">
+                {sequenceChain.map((slotIndex, chainIndex) => {
+                  const isCompatible = slotCompatibility[slotIndex];
+                  const isCurrentlyPlaying = isPlayingChain && currentChainIndex === chainIndex;
                   
                   return (
                     <button
-                      key={btn}
-                      className={activeButton === btn ? "active" : ""}
-                      onMouseDown={() => setActiveButton(btn)}
-                      onMouseUp={() => setActiveButton(null)}
-                      onMouseLeave={() => setActiveButton(null)}
-                      disabled={isPlaying}
+                      key={`chain-${chainIndex}`}
+                      draggable={!isPlaying}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('text/plain', chainIndex.toString());
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                        if (!isNaN(fromIndex) && fromIndex !== chainIndex) {
+                          moveChainItem(fromIndex, chainIndex);
+                        }
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        removeFromChain(chainIndex);
+                      }}
+                      className={`btn-sequence ${
+                        isCurrentlyPlaying ? 'playing' : 
+                        !isCompatible ? 'incompatible' :
+                        'loaded'
+                      }`}
+                      title={`${sequenceSlots[slotIndex]?.replace(/\\/g, '/').split('/').pop()?.replace(/\.csv$/i, '') || 'Unknown'}\nスロット: ${slotIndex + 1}\n順序: ${chainIndex + 1}\n(ドラッグで並び替え / 右クリックで削除)`}
                     >
-                      {label}
+                      {slotIndex + 1}
                     </button>
                   );
                 })}
               </div>
-            </div>
+            )}
+          </div>
+        </div>
       </section>
       
         {/* Button Mapping Editor - 展開式 */}
@@ -444,6 +789,7 @@ function App() {
             isExpanded={true}
             activeTestButton={activeTestButton}
             setActiveTestButton={setActiveTestButton}
+            onMappingSaved={loadMapping}
           />
         )}
       
@@ -451,12 +797,27 @@ function App() {
       {showSequenceSelector && (
         <SequenceSelector
           onClose={() => setShowSequenceSelector(false)}
-          onSelect={handleSequenceSelect}
-          availableButtons={availableButtons}
+          onSelect={(path, slot, compatible) => handleSequenceSelect(path, slot, compatible)}
+          availableButtons={sequenceButtons}
           targetSlot={loadingSlot}
           currentSlots={sequenceSlots}
         />
       )}
+      
+      {/* Sequence Editor Modal */}
+      {showSequenceEditor && editingSlotPath && (
+        <SequenceEditor
+          csvPath={editingSlotPath}
+          onClose={() => {
+            setShowSequenceEditor(false);
+            setEditingSlotPath(null);
+            setCurrentPlayingRow(-1);
+          }}
+          currentPlayingRow={currentPlayingRow}
+          sequenceButtons={sequenceButtons}
+        />
+      )}
+
     </main>
   );
 }

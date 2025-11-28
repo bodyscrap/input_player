@@ -97,10 +97,12 @@ impl Controller {
                     "button5" => buttons_raw |= XButtons::LB,
                     "button6" => buttons_raw |= XButtons::RB,
                     "button7" => {
-                        left_trigger_value = 255;
+                        // OR結合: 既に押されている場合はそのまま
+                        left_trigger_value = left_trigger_value.max(255);
                     },
                     "button8" => {
-                        right_trigger_value = 255;
+                        // OR結合: 既に押されている場合はそのまま
+                        right_trigger_value = right_trigger_value.max(255);
                     },
                     "button9" => buttons_raw |= XButtons::BACK,
                     "button10" => buttons_raw |= XButtons::START,

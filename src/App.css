@@ -174,17 +174,17 @@ h3 {
   border-color: #00ff00;
 }
 
-/* Input Controls Row (POV + Sequence) */
+/* Input Controls Row (POV + Buttons) */
 .input-controls-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
+  display: flex;
+  gap: 0;
   margin-bottom: 0.75em;
 }
 
 @media (max-width: 768px) {
   .input-controls-row {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+    gap: 15px;
   }
 }
 
@@ -193,6 +193,7 @@ h3 {
   background-color: #1a1a1a;
   border-radius: 8px;
   padding: 0.75em;
+  margin-bottom: 0.75em;
   border: 1px solid #333;
 }
 
@@ -227,17 +228,28 @@ h3 {
   margin-top: 8px;
 }
 
-.invert-control {
+.sequence-options {
+  display: flex;
+  gap: 15px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.invert-control,
+.loop-control {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 0.85em;
   cursor: pointer;
   white-space: nowrap;
-  padding-left: 4px;
+  padding: 0;
+  margin: 0;
 }
 
-.invert-control input[type="checkbox"] {
+.invert-control input[type="checkbox"],
+.loop-control input[type="checkbox"] {
   cursor: pointer;
 }
 
@@ -322,7 +334,8 @@ h3 {
 
 /* Sequence Buttons */
 .sequence-buttons {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
   gap: 6px;
 }
 
@@ -340,6 +353,8 @@ h3 {
   overflow: hidden;
   transition: all 0.2s ease;
 }
+
+
 
 .btn-sequence:hover:not(:disabled) {
   background: #3a3a3a;
@@ -366,6 +381,17 @@ h3 {
 
 .btn-sequence.empty:hover:not(:disabled) {
   background: #666;
+}
+
+/* 互換性なし（青色） */
+.btn-sequence.incompatible {
+  background: #2196F3;
+  border-color: #1976D2;
+  color: white;
+}
+
+.btn-sequence.incompatible:hover:not(:disabled) {
+  background: #1976D2;
 }
 
 /* 再生中（オレンジ色） */
@@ -439,14 +465,12 @@ input[type="checkbox"] {
 
 /* POV / D-pad */
 .pov-section {
-  background-color: #1a1a1a;
-  border-radius: 8px;
-  padding: 0.75em;
-  border: 1px solid #333;
+  flex: 0 0 auto;
 }
 
 .pov-section h3 {
   margin-top: 0;
+  margin-bottom: 8px;
 }
 
 .pov-grid {
@@ -475,19 +499,46 @@ input[type="checkbox"] {
 
 /* Buttons */
 .buttons-section {
-  margin-bottom: 15px;
+  flex: 1;
+  margin-left: 15px;
+  display: flex;
+  flex-direction: column;
+}
+
+.buttons-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.buttons-header h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mapping-display-checkbox {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .button-hint {
   font-size: 10px;
   color: #888;
-  margin-bottom: 5px;
+  font-weight: normal;
 }
 
 .button-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 5px;
+  flex: 1;
+  align-content: start;
 }
 
 .button-grid button {
@@ -501,6 +552,26 @@ input[type="checkbox"] {
   color: #000;
   border-color: #00ff00;
   font-weight: bold;
+}
+
+/* シーケンス用ボタン（緑色） */
+.button-grid button.sequence-button {
+  color: #00ff00;
+}
+
+.button-grid button.sequence-button.active {
+  background-color: #00ff00;
+  color: #000;
+}
+
+/* マニュアル専用ボタン（オレンジ色） */
+.button-grid button.manual-only-button {
+  color: #ff9900;
+}
+
+.button-grid button.manual-only-button.active {
+  background-color: #ff9900;
+  color: #000;
 }
 
 /* Common Button Styles */
@@ -544,4 +615,192 @@ progress {
   width: 100%;
   height: 12px;
   margin-top: 0.3em;
+}
+
+/* Sequence Chain */
+.chain-section {
+  margin-top: 0.75em;
+}
+
+.chain-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.chain-header h3 {
+  margin: 0;
+}
+
+.chain-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-chain-play,
+.btn-chain-clear {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 4px;
+  border: 1px solid #646cff;
+  background-color: #2a2a2a;
+  color: rgba(255, 255, 255, 0.87);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-chain-play:hover:not(:disabled),
+.btn-chain-clear:hover:not(:disabled) {
+  background-color: #3a3a3a;
+  border-color: #747bff;
+}
+
+.btn-chain-play:disabled,
+.btn-chain-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chain-add-buttons {
+  margin-bottom: 12px;
+}
+
+.chain-hint {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.chain-display-area {
+  background: #1a1a1a;
+  border: 2px solid #444;
+  border-radius: 6px;
+  padding: 12px;
+  min-height: 80px;
+}
+
+.chain-display-area h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #88ff88;
+}
+
+.chain-drop-area {
+  min-height: 80px;
+  max-height: 120px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: #1a1a1a;
+  border: 2px dashed #444;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+}
+
+.chain-drop-area::-webkit-scrollbar {
+  height: 8px;
+}
+
+.chain-drop-area::-webkit-scrollbar-track {
+  background: #2a2a2a;
+  border-radius: 4px;
+}
+
+.chain-drop-area::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.chain-drop-area::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}
+
+.chain-empty-message {
+  width: 100%;
+  text-align: center;
+  color: #888;
+  font-size: 0.9em;
+  padding: 20px;
+}
+
+.chain-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.chain-buttons .btn-sequence[draggable="true"] {
+  cursor: grab;
+}
+
+.chain-buttons .btn-sequence[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.chain-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 100px;
+  padding: 8px;
+  background: #2a2a2a;
+  border: 2px solid #444;
+  border-radius: 6px;
+  cursor: move;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.chain-item:hover {
+  background: #3a3a3a;
+  border-color: #646cff;
+}
+
+.chain-item.selected {
+  border-color: #00ff00;
+  background: #2a4a2a;
+}
+
+.chain-item.playing {
+  border-color: #00ff00;
+  background: #1a3a1a;
+  animation: pulse-chain 1s ease-in-out infinite;
+}
+
+@keyframes pulse-chain {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.chain-item-number {
+  font-size: 11px;
+  color: #888;
+  font-weight: 600;
+}
+
+.chain-item-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.87);
+  margin: 4px 0;
+  text-align: center;
+  word-break: break-all;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-item-slot {
+  font-size: 10px;
+  color: #646cff;
+  font-weight: 600;
 }

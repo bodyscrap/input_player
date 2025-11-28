@@ -40,6 +40,10 @@ export const api = {
     return await invoke('set_invert_horizontal', { invert });
   },
 
+  async setLoopPlayback(loop: boolean): Promise<void> {
+    return await invoke('set_loop_playback', { loop });
+  },
+
   async isPlaying(): Promise<boolean> {
     return await invoke('is_playing');
   },
@@ -74,5 +78,27 @@ export const api = {
 
   async getFps(): Promise<number> {
     return await invoke('get_fps');
+  },
+
+  // Frame editor operations
+  async loadFramesForEdit(path: string): Promise<any[]> {
+    return await invoke('load_frames_for_edit', { path });
+  },
+
+  async saveFramesForEdit(path: string, frames: any[]): Promise<void> {
+    return await invoke('save_frames_for_edit', { path, frames });
+  },
+
+  async getCurrentPlayingFrame(): Promise<number> {
+    return await invoke('get_current_playing_frame');
+  },
+
+  async openEditorWindow(csvPath: string): Promise<void> {
+    return await invoke('open_editor_window', { csvPath });
+  },
+
+  // 編集内容をスロットに反映（再ロード）
+  async reloadCurrentSequence(): Promise<void> {
+    return await invoke('reload_current_sequence');
   },
 };

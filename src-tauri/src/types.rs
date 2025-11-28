@@ -26,6 +26,8 @@ pub struct InputFrame {
 pub struct ButtonMapping {
     pub xbox: HashMap<String, String>,
     pub dualshock4: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "sequenceButtons")]
+    pub sequence_buttons: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

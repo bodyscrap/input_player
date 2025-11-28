@@ -10,12 +10,14 @@ interface ButtonMappingEditorProps {
   isExpanded: boolean;
   activeTestButton: string | null;
   setActiveTestButton: (button: string | null) => void;
+  onMappingSaved?: () => void; // マッピング保存時のコールバック
 }
 
-function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, setActiveTestButton }: ButtonMappingEditorProps) {
+function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, setActiveTestButton, onMappingSaved }: ButtonMappingEditorProps) {
   const [mapping, setMapping] = useState<ButtonMapping>({
     xbox: {},
     dualshock4: {},
+    sequenceButtons: [],
   });
   const [message, setMessage] = useState("");
   const [isConnected, setIsConnected] = useState(initialConnected);
@@ -70,6 +72,10 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
     try {
       await api.saveButtonMapping("config/button_mapping.json", mapping);
       setMessage("マッピングを保存しました");
+      // 親コンポーネントに保存を通知
+      if (onMappingSaved) {
+        onMappingSaved();
+      }
     } catch (error) {
       setMessage(`保存エラー: ${error}`);
     }
@@ -108,14 +114,21 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
       const buttons = await api.getCsvButtonNames(file);
       
       // 自動マッピング作成
+      // 既存のsequenceButtonsを保持しつつ、CSVのボタンを追加
+      const currentSequenceButtons = mapping.sequenceButtons || [];
+      const allSequenceButtons = [...new Set([...currentSequenceButtons, ...buttons])];
+      
       const newMapping: ButtonMapping = {
-        xbox: {},
-        dualshock4: {},
+        ...mapping,
+        sequenceButtons: allSequenceButtons,
       };
       
       buttons.forEach((btnName, index) => {
-        const xboxBtn = `button${Math.min(index + 1, 10)}`;
-        newMapping.xbox[btnName] = xboxBtn;
+        // 既存のマッピングがなければ自動割り当て
+        if (!newMapping.xbox[btnName]) {
+          const xboxBtn = `button${Math.min(index + 1, 10)}`;
+          newMapping.xbox[btnName] = xboxBtn;
+        }
       });
       
       setMapping(newMapping);
@@ -141,9 +154,27 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
     setMapping((prev) => {
       const newXbox = { ...prev.xbox };
       delete newXbox[csvButton];
+      const newSequenceButtons = (prev.sequenceButtons || []).filter(btn => btn !== csvButton);
       return {
         ...prev,
         xbox: newXbox,
+        sequenceButtons: newSequenceButtons,
+      };
+    });
+  };
+
+  const toggleSequenceButton = (csvButton: string) => {
+    setMapping((prev) => {
+      const currentSequenceButtons = prev.sequenceButtons || [];
+      const isCurrentlyInSequence = currentSequenceButtons.includes(csvButton);
+      
+      const newSequenceButtons = isCurrentlyInSequence
+        ? currentSequenceButtons.filter(btn => btn !== csvButton)
+        : [...currentSequenceButtons, csvButton];
+      
+      return {
+        ...prev,
+        sequenceButtons: newSequenceButtons,
       };
     });
   };
@@ -155,7 +186,7 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
     }
   };
 
-  const handleTestButtonPress = (csvButton: string, xboxButton: string) => {
+  const handleTestButtonPress = (_csvButton: string, xboxButton: string) => {
     if (!isConnected) return;
     setActiveTestButton(xboxButton); // Xboxボタン名を設定
   };
@@ -206,13 +237,14 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
             <th>CSVボタン名</th>
             <th>→</th>
             <th>Xboxボタン</th>
+            <th>シーケンス</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody>
           {csvButtons.length === 0 ? (
             <tr>
-              <td colSpan={4} className="empty-message">
+              <td colSpan={5} className="empty-message">
                 マッピングがありません。CSVファイルを選択するか、「+ 追加」をクリックしてください。
               </td>
             </tr>
@@ -247,6 +279,13 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
                         </option>
                       ))}
                     </select>
+                  </td>
+                  <td className="checkbox-cell">
+                    <input
+                      type="checkbox"
+                      checked={mapping.sequenceButtons?.includes(csvButton) ?? false}
+                      onChange={() => toggleSequenceButton(csvButton)}
+                    />
                   </td>
                   <td>
                     <button

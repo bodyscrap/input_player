@@ -1,6 +1,7 @@
 export interface ButtonMapping {
   xbox: Record<string, string>;
   dualshock4: Record<string, string>;
+  sequenceButtons?: string[]; // シーケンスで使用するボタンのリスト
 }
 
 export interface InputFrame {

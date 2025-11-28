@@ -10,12 +10,14 @@ use types::{ButtonMapping, ControllerType, InputFrame};
 
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
-use tauri::State;
+use std::collections::HashMap;
+use tauri::{State, Manager};
 
 struct AppState {
     controller: Arc<Mutex<Controller>>,
     player: Arc<Mutex<Player>>,
     fps: Arc<Mutex<u32>>,
+    frame_cache: Arc<Mutex<std::collections::HashMap<String, Vec<InputFrame>>>>, // パス -> フレームデータのキャッシュ
 }
 
 // Tauri commands
@@ -54,6 +56,8 @@ fn is_controller_connected(state: State<AppState>) -> bool {
 
 #[tauri::command]
 fn load_input_file(path: String, state: State<AppState>) -> Result<usize, String> {
+    println!("[load_input_file] 開始 - パス: {}", path);
+    
     // パスの区切り文字を正規化
     let normalized_path = path.replace('\\', "/");
     
@@ -75,13 +79,27 @@ fn load_input_file(path: String, state: State<AppState>) -> Result<usize, String
         return Err(format!("File not found: {:?}", csv_path));
     }
     
-    let frames = load_csv(&csv_path)
-        .map_err(|e| format!("CSV load error: {}", e))?;
+    // キャッシュをチェック
+    let mut cache = state.frame_cache.lock().unwrap();
+    let frames = if let Some(cached_frames) = cache.get(&normalized_path) {
+        // キャッシュから取得
+        println!("[load_input_file] キャッシュから取得 - {}フレーム", cached_frames.len());
+        cached_frames.clone()
+    } else {
+        // CSVを読み込んでキャッシュに保存
+        println!("[load_input_file] CSVから読み込み中...");
+        let loaded_frames = load_csv(&csv_path)
+            .map_err(|e| format!("CSV load error: {}", e))?;
+        println!("[load_input_file] CSV読み込み完了 - {}フレーム", loaded_frames.len());
+        cache.insert(normalized_path.clone(), loaded_frames.clone());
+        loaded_frames
+    };
     
     // 総フレーム数（durationの合計）を計算
     let total_frames: u32 = frames.iter().map(|f| f.duration).sum();
     let mut player = state.player.lock().unwrap();
     player.load_frames(frames);
+    player.set_current_path(normalized_path);
     
     Ok(total_frames as usize)
 }
@@ -89,7 +107,10 @@ fn load_input_file(path: String, state: State<AppState>) -> Result<usize, String
 #[tauri::command]
 fn start_playback(state: State<AppState>) -> Result<(), String> {
     let mut player = state.player.lock().unwrap();
+    let frame_count = player.frames.len();
+    println!("[start_playback] 開始 - フレーム数: {}", frame_count);
     player.start();
+    println!("[start_playback] is_playing = true に設定");
     Ok(())
 }
 
@@ -115,6 +136,30 @@ fn resume_playback(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn reload_current_sequence(state: State<AppState>) -> Result<(), String> {
+    let player = state.player.lock().unwrap();
+    let current_path = player.get_current_path()
+        .ok_or_else(|| "再生中のシーケンスがありません".to_string())?;
+    drop(player); // unlock before reloading
+    
+    // キャッシュをクリアして再ロード
+    let mut cache = state.frame_cache.lock().unwrap();
+    cache.remove(&current_path);
+    drop(cache);
+    
+    // 再ロード（キャッシュなしで読み込み直す）
+    load_input_file(current_path, state)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_loop_playback(loop_enabled: bool, state: State<AppState>) -> Result<(), String> {
+    let mut player = state.player.lock().unwrap();
+    player.set_loop_playback(loop_enabled);
+    Ok(())
+}
+
+#[tauri::command]
 fn set_invert_horizontal(invert: bool, state: State<AppState>) -> Result<(), String> {
     let mut player = state.player.lock().unwrap();
     player.set_invert_horizontal(invert);
@@ -124,7 +169,11 @@ fn set_invert_horizontal(invert: bool, state: State<AppState>) -> Result<(), Str
 #[tauri::command]
 fn is_playing(state: State<AppState>) -> bool {
     let player = state.player.lock().unwrap();
-    player.is_playing()
+    let playing = player.is_playing();
+    let frame_count = player.frames.len();
+    let current_frame = player.get_current_frame();
+    println!("[is_playing] チェック: playing={}, frames={}, current={}", playing, frame_count, current_frame);
+    playing
 }
 
 #[tauri::command]
@@ -279,12 +328,279 @@ fn get_csv_button_names(path: String) -> Result<Vec<String>, String> {
         .map_err(|e| format!("CSV read error: {}", e))
 }
 
+#[tauri::command]
+fn load_frames_for_edit(path: String) -> Result<Vec<InputFrame>, String> {
+    println!("========== load_frames_for_edit ==========");
+    println!("Requested path: {}", path);
+    
+    let normalized_path = path.replace('\\', "/");
+    println!("Normalized path: {}", normalized_path);
+    
+    let csv_path = if std::path::Path::new(&normalized_path).is_absolute() {
+        PathBuf::from(&normalized_path)
+    } else {
+        let current = std::env::current_dir()
+            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let project_root = if current.ends_with("src-tauri") {
+            current.parent().unwrap().to_path_buf()
+        } else {
+            current
+        };
+        project_root.join(&normalized_path)
+    };
+    
+    println!("Final CSV path: {:?}", csv_path);
+    
+    if !csv_path.exists() {
+        eprintln!("✗ File not found: {:?}", csv_path);
+        return Err(format!("File not found: {:?}", csv_path));
+    }
+    
+    println!("✓ File exists, loading CSV...");
+    let result = load_csv(&csv_path)
+        .map_err(|e| {
+            eprintln!("✗ CSV load error: {}", e);
+            format!("CSV load error: {}", e)
+        });
+    
+    if let Ok(ref frames) = result {
+        println!("✓ Loaded {} frames", frames.len());
+    }
+    
+    result
+}
+
+#[tauri::command]
+fn save_frames_for_edit(path: String, frames: Vec<InputFrame>, state: State<AppState>) -> Result<(), String> {
+    use std::fs::File;
+    use std::io::Write;
+    
+    println!("[save_frames_for_edit] 開始 - パス: {}, フレーム数: {}", path, frames.len());
+    
+    let normalized_path = path.replace('\\', "/");
+    
+    let csv_path = if std::path::Path::new(&normalized_path).is_absolute() {
+        PathBuf::from(&normalized_path)
+    } else {
+        let current = std::env::current_dir()
+            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let project_root = if current.ends_with("src-tauri") {
+            current.parent().unwrap().to_path_buf()
+        } else {
+            current
+        };
+        project_root.join(&normalized_path)
+    };
+    
+    println!("[save_frames_for_edit] 保存先: {:?}", csv_path);
+    
+    let mut file = File::create(&csv_path)
+        .map_err(|e| format!("ファイル作成エラー: {}", e))?;
+    
+    // ボタン名の順序を最初のフレームから確定
+    let button_names: Vec<String> = if let Some(first_frame) = frames.first() {
+        let mut names: Vec<String> = first_frame.buttons.keys().cloned().collect();
+        names.sort();
+        println!("[save_frames_for_edit] ボタン名: {:?}", names);
+        names
+    } else {
+        Vec::new()
+    };
+    
+    // ヘッダー行を書き込み
+    let mut header = vec!["duration".to_string(), "direction".to_string()];
+    header.extend(button_names.clone());
+    writeln!(file, "{}", header.join(","))
+        .map_err(|e| format!("書き込みエラー: {}", e))?;
+    
+    // フレーム数を先に取得（ムーブ前）
+    let frame_count = frames.len();
+    
+    // データ行を書き込み
+    for frame in frames {
+        let mut values = vec![
+            frame.duration.to_string(),
+            frame.direction.to_string(),
+        ];
+        
+        // ヘッダーと同じ順序でボタン値を出力
+        for button_name in &button_names {
+            values.push(frame.buttons.get(button_name).unwrap_or(&0).to_string());
+        }
+        
+        writeln!(file, "{}", values.join(","))
+            .map_err(|e| format!("書き込みエラー: {}", e))?;
+    }
+    
+    // 保存後にキャッシュをクリア（次回読み込み時に最新のファイルを読む）
+    let mut cache = state.frame_cache.lock().unwrap();
+    let was_cached = cache.remove(&normalized_path).is_some();
+    println!("[save_frames_for_edit] キャッシュクリア完了 - キャッシュにあった: {}", was_cached);
+    println!("[save_frames_for_edit] 保存完了 - {}行を書き込み", frame_count);
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn get_current_playing_frame(state: State<AppState>) -> usize {
+    let player = state.player.lock().unwrap();
+    player.get_current_frame()
+}
+
+#[tauri::command]
+fn open_editor_test(app: tauri::AppHandle, csv_path: String) -> Result<(), String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use base64::{Engine as _, engine::general_purpose};
+    
+    println!("========== open_editor_test (simple HTML) ==========");
+    
+    let mut hasher = DefaultHasher::new();
+    csv_path.hash(&mut hasher);
+    let window_label = format!("test_{}", hasher.finish());
+    
+    let encoded_path = general_purpose::STANDARD.encode(csv_path.as_bytes());
+    let url = format!("editor-test.html?csvPath={}", encoded_path);
+    
+    let window = tauri::WebviewWindowBuilder::new(
+        &app,
+        &window_label,
+        tauri::WebviewUrl::App(url.into())
+    )
+    .title("Editor Test Window")
+    .inner_size(800.0, 600.0)
+    .visible(true)
+    .focused(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+    
+    #[cfg(debug_assertions)]
+    {
+        let w = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            w.open_devtools();
+        });
+    }
+    
+    println!("✓ Test window created");
+    Ok(())
+}
+
+#[tauri::command]
+fn open_editor_window(app: tauri::AppHandle, csv_path: String) -> Result<(), String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    println!("========== open_editor_window ==========");
+    println!("CSV path: {}", csv_path);
+    
+    // ウィンドウラベルを一意にするためにパスのハッシュを使用
+    let mut hasher = DefaultHasher::new();
+    csv_path.hash(&mut hasher);
+    let window_label = format!("editor_{}", hasher.finish());
+    println!("Window label: {}", window_label);
+    
+    // 既存のウィンドウがあれば閉じる
+    if let Some(window) = app.get_webview_window(&window_label) {
+        println!("Closing existing window...");
+        let _ = window.close();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    
+    // Base64エンコードされたCSVパスをクエリパラメータとして追加
+    use base64::{Engine as _, engine::general_purpose};
+    let encoded_path = general_purpose::STANDARD.encode(csv_path.as_bytes());
+    let url = format!("editor.html?csvPath={}", encoded_path);
+    println!("Opening URL: {}", url);
+    
+    // 新しいエディタウィンドウを開く
+    println!("Building window with URL: {}", url);
+    let builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        &window_label,
+        tauri::WebviewUrl::App(url.clone().into())
+    )
+    .title(format!("Sequence Editor - {}", csv_path.split('/').last().or_else(|| csv_path.split('\\').last()).unwrap_or(&csv_path)))
+    .inner_size(1200.0, 800.0)
+    .resizable(true)
+    .center()
+    .visible(true)
+    .focused(true)
+    .initialization_script(r#"
+        console.log('========== Tauri Initialization Script ==========');
+        console.log('Location:', window.location.href);
+        window.addEventListener('error', (e) => {
+            console.error('Window error:', e.message, e.filename, e.lineno);
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('Unhandled promise rejection:', e.reason);
+        });
+        console.log('Initialization complete');
+    "#);
+    
+    let window = builder.build().map_err(|e| {
+        eprintln!("✗ Failed to build editor window: {}", e);
+        e.to_string()
+    })?;
+    
+    println!("✓ Editor window created");
+    println!("  Label: {}", window.label());
+    println!("  Title: {:?}", window.title());
+    
+    // ウィンドウの状態をチェック
+    if let Ok(visible) = window.is_visible() {
+        println!("  Visible: {}", visible);
+    }
+    if let Ok(focused) = window.is_focused() {
+        println!("  Focused: {}", focused);
+    }
+    
+    // イベントリスナーを追加してウィンドウのロード状態を監視
+    let label = window.label().to_string();
+    window.on_window_event(move |event| {
+        match event {
+            tauri::WindowEvent::Focused(focused) => {
+                println!("[{}] Window focused: {}", label, focused);
+            }
+            tauri::WindowEvent::Resized(size) => {
+                println!("[{}] Window resized: {}x{}", label, size.width, size.height);
+            }
+            tauri::WindowEvent::Moved(_) => {
+                println!("[{}] Window moved", label);
+            }
+            tauri::WindowEvent::CloseRequested { .. } => {
+                println!("[{}] Window close requested", label);
+            }
+            tauri::WindowEvent::Destroyed => {
+                println!("[{}] Window destroyed", label);
+            }
+            _ => {}
+        }
+    });
+    
+    // 少し待ってから開発者ツールを開く
+    #[cfg(debug_assertions)]
+    {
+        let window_clone = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            println!("Opening DevTools...");
+            window_clone.open_devtools();
+            println!("✓ DevTools command sent");
+        });
+    }
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app_state = AppState {
         controller: Arc::new(Mutex::new(Controller::new())),
         player: Arc::new(Mutex::new(Player::new())),
         fps: Arc::new(Mutex::new(60)),
+        frame_cache: Arc::new(Mutex::new(HashMap::new())),
     };
 
     // FPS設定に基づいて更新するタスクを起動
@@ -348,6 +664,7 @@ pub fn run() {
             pause_playback,
             resume_playback,
             set_invert_horizontal,
+            set_loop_playback,
             is_playing,
             get_playback_progress,
             load_button_mapping,
@@ -356,6 +673,12 @@ pub fn run() {
             get_csv_button_names,
             set_fps,
             get_fps,
+            load_frames_for_edit,
+            save_frames_for_edit,
+            get_current_playing_frame,
+            open_editor_window,
+            open_editor_test,
+            reload_current_sequence,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
