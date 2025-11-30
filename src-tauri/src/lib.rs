@@ -35,7 +35,7 @@ fn connect_controller(
     let mut controller = state.controller.lock().unwrap();
     controller.connect(ctrl_type)
         .map_err(|e| e.to_string())?;
-    
+
     Ok(format!("Connected to {} controller", controller_type))
 }
 
@@ -44,7 +44,7 @@ fn disconnect_controller(state: State<AppState>) -> Result<String, String> {
     let mut controller = state.controller.lock().unwrap();
     controller.disconnect()
         .map_err(|e| e.to_string())?;
-    
+
     Ok("Controller disconnected".to_string())
 }
 
@@ -55,12 +55,25 @@ fn is_controller_connected(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
+fn load_input_sequence(frames: Vec<types::InputFrame>, state: State<AppState>) -> Result<usize, String> {
+    println!("[load_input_sequence] メモリからシーケンス読み込み - {}フレーム", frames.len());
+
+    // 総フレーム数（durationの合計）を計算
+    let total_frames: u32 = frames.iter().map(|f| f.duration).sum();
+    let mut player = state.player.lock().unwrap();
+    player.load_frames(frames);
+
+    println!("[load_input_sequence] 読み込み完了 - 総フレーム数: {}", total_frames);
+    Ok(total_frames as usize)
+}
+
+#[tauri::command]
 fn load_input_file(path: String, state: State<AppState>) -> Result<usize, String> {
     println!("[load_input_file] 開始 - パス: {}", path);
-    
+
     // パスの区切り文字を正規化
     let normalized_path = path.replace('\\', "/");
-    
+
     // 相対パスを絶対パスに変換
     let csv_path = if std::path::Path::new(&normalized_path).is_absolute() {
         PathBuf::from(&normalized_path)
@@ -74,11 +87,11 @@ fn load_input_file(path: String, state: State<AppState>) -> Result<usize, String
         };
         project_root.join(&normalized_path)
     };
-    
+
     if !csv_path.exists() {
         return Err(format!("File not found: {:?}", csv_path));
     }
-    
+
     // キャッシュをチェック
     let mut cache = state.frame_cache.lock().unwrap();
     let frames = if let Some(cached_frames) = cache.get(&normalized_path) {
@@ -94,13 +107,13 @@ fn load_input_file(path: String, state: State<AppState>) -> Result<usize, String
         cache.insert(normalized_path.clone(), loaded_frames.clone());
         loaded_frames
     };
-    
+
     // 総フレーム数（durationの合計）を計算
     let total_frames: u32 = frames.iter().map(|f| f.duration).sum();
     let mut player = state.player.lock().unwrap();
     player.load_frames(frames);
     player.set_current_path(normalized_path);
-    
+
     Ok(total_frames as usize)
 }
 
@@ -141,12 +154,12 @@ fn reload_current_sequence(state: State<AppState>) -> Result<(), String> {
     let current_path = player.get_current_path()
         .ok_or_else(|| "再生中のシーケンスがありません".to_string())?;
     drop(player); // unlock before reloading
-    
+
     // キャッシュをクリアして再ロード
     let mut cache = state.frame_cache.lock().unwrap();
     cache.remove(&current_path);
     drop(cache);
-    
+
     // 再ロード（キャッシュなしで読み込み直す）
     load_input_file(current_path, state)?;
     Ok(())
@@ -186,7 +199,7 @@ fn get_playback_progress(state: State<AppState>) -> (usize, usize) {
 fn load_button_mapping(path: String, state: State<AppState>) -> Result<ButtonMapping, String> {
     // パスの区切り文字を正規化
     let normalized_path = path.replace('\\', "/");
-    
+
     // 相対パスを絶対パスに変換
     let mapping_path = if std::path::Path::new(&normalized_path).is_absolute() {
         PathBuf::from(&normalized_path)
@@ -200,21 +213,21 @@ fn load_button_mapping(path: String, state: State<AppState>) -> Result<ButtonMap
         };
         project_root.join(&normalized_path)
     };
-    
+
     if !mapping_path.exists() {
         return Err(format!("File not found: {:?}", mapping_path));
     }
-    
+
     let content = std::fs::read_to_string(&mapping_path)
         .map_err(|e| format!("File read error: {}", e))?;
-    
+
     let mapping: ButtonMapping = serde_json::from_str(&content)
         .map_err(|e| format!("JSON parse error: {}", e))?;
-    
+
     // Player\u306b\u30dc\u30bf\u30f3\u30de\u30c3\u30d4\u30f3\u30b0\u3092\u8a2d\u5b9a
     let mut player = state.player.lock().unwrap();
     player.set_button_mapping(mapping.xbox.clone());
-    
+
     Ok(mapping)
 }
 
@@ -222,7 +235,7 @@ fn load_button_mapping(path: String, state: State<AppState>) -> Result<ButtonMap
 fn save_button_mapping(path: String, mapping: ButtonMapping) -> Result<(), String> {
     // パスの区切り文字を正規化
     let normalized_path = path.replace('\\', "/");
-    
+
     // 相対パスを絶対パスに変換
     let mapping_path = if std::path::Path::new(&normalized_path).is_absolute() {
         PathBuf::from(&normalized_path)
@@ -236,7 +249,7 @@ fn save_button_mapping(path: String, mapping: ButtonMapping) -> Result<(), Strin
         };
         project_root.join(&normalized_path)
     };
-    
+
     // ディレクトリが存在しない場合は作成
     if let Some(parent) = mapping_path.parent() {
         if !parent.exists() {
@@ -244,13 +257,13 @@ fn save_button_mapping(path: String, mapping: ButtonMapping) -> Result<(), Strin
                 .map_err(|e| format!("Failed to create directory: {}", e))?;
         }
     }
-    
+
     let content = serde_json::to_string_pretty(&mapping)
         .map_err(|e| format!("JSON serialize error: {}", e))?;
-    
+
     std::fs::write(&mapping_path, content)
         .map_err(|e| format!("File write error: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -261,11 +274,11 @@ fn update_manual_input(
     state: State<AppState>,
 ) -> Result<(), String> {
     let mut controller = state.controller.lock().unwrap();
-    
+
     if !controller.is_connected() {
         return Err("Controller not connected".to_string());
     }
-    
+
     let frame = InputFrame {
         duration: 1,
         direction,
@@ -277,10 +290,10 @@ fn update_manual_input(
         left_trigger: 0,
         right_trigger: 0,
     };
-    
+
     controller.update_input(&frame, false)
         .map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
@@ -304,7 +317,7 @@ fn get_fps(state: State<AppState>) -> u32 {
 fn get_csv_button_names(path: String) -> Result<Vec<String>, String> {
     // パスの区切り文字を正規化（\ を / に統一）
     let normalized_path = path.replace('\\', "/");
-    
+
     // 相対パスを絶対パスに変換
     let csv_path = if std::path::Path::new(&normalized_path).is_absolute() {
         PathBuf::from(&normalized_path)
@@ -319,11 +332,11 @@ fn get_csv_button_names(path: String) -> Result<Vec<String>, String> {
         };
         project_root.join(&normalized_path)
     };
-    
+
     if !csv_path.exists() {
         return Err(format!("File not found: {:?}", csv_path));
     }
-    
+
     csv_loader::get_csv_button_names(&csv_path)
         .map_err(|e| format!("CSV read error: {}", e))
 }
@@ -332,10 +345,10 @@ fn get_csv_button_names(path: String) -> Result<Vec<String>, String> {
 fn load_frames_for_edit(path: String) -> Result<Vec<InputFrame>, String> {
     println!("========== load_frames_for_edit ==========");
     println!("Requested path: {}", path);
-    
+
     let normalized_path = path.replace('\\', "/");
     println!("Normalized path: {}", normalized_path);
-    
+
     let csv_path = if std::path::Path::new(&normalized_path).is_absolute() {
         PathBuf::from(&normalized_path)
     } else {
@@ -348,25 +361,25 @@ fn load_frames_for_edit(path: String) -> Result<Vec<InputFrame>, String> {
         };
         project_root.join(&normalized_path)
     };
-    
+
     println!("Final CSV path: {:?}", csv_path);
-    
+
     if !csv_path.exists() {
         eprintln!("✗ File not found: {:?}", csv_path);
         return Err(format!("File not found: {:?}", csv_path));
     }
-    
+
     println!("✓ File exists, loading CSV...");
     let result = load_csv(&csv_path)
         .map_err(|e| {
             eprintln!("✗ CSV load error: {}", e);
             format!("CSV load error: {}", e)
         });
-    
+
     if let Ok(ref frames) = result {
         println!("✓ Loaded {} frames", frames.len());
     }
-    
+
     result
 }
 
@@ -374,11 +387,11 @@ fn load_frames_for_edit(path: String) -> Result<Vec<InputFrame>, String> {
 fn save_frames_for_edit(path: String, frames: Vec<InputFrame>, state: State<AppState>) -> Result<(), String> {
     use std::fs::File;
     use std::io::Write;
-    
+
     println!("[save_frames_for_edit] 開始 - パス: {}, フレーム数: {}", path, frames.len());
-    
+
     let normalized_path = path.replace('\\', "/");
-    
+
     let csv_path = if std::path::Path::new(&normalized_path).is_absolute() {
         PathBuf::from(&normalized_path)
     } else {
@@ -391,12 +404,12 @@ fn save_frames_for_edit(path: String, frames: Vec<InputFrame>, state: State<AppS
         };
         project_root.join(&normalized_path)
     };
-    
+
     println!("[save_frames_for_edit] 保存先: {:?}", csv_path);
-    
+
     let mut file = File::create(&csv_path)
         .map_err(|e| format!("ファイル作成エラー: {}", e))?;
-    
+
     // ボタン名の順序を最初のフレームから確定
     let button_names: Vec<String> = if let Some(first_frame) = frames.first() {
         let mut names: Vec<String> = first_frame.buttons.keys().cloned().collect();
@@ -406,38 +419,38 @@ fn save_frames_for_edit(path: String, frames: Vec<InputFrame>, state: State<AppS
     } else {
         Vec::new()
     };
-    
+
     // ヘッダー行を書き込み
     let mut header = vec!["duration".to_string(), "direction".to_string()];
     header.extend(button_names.clone());
     writeln!(file, "{}", header.join(","))
         .map_err(|e| format!("書き込みエラー: {}", e))?;
-    
+
     // フレーム数を先に取得（ムーブ前）
     let frame_count = frames.len();
-    
+
     // データ行を書き込み
     for frame in frames {
         let mut values = vec![
             frame.duration.to_string(),
             frame.direction.to_string(),
         ];
-        
+
         // ヘッダーと同じ順序でボタン値を出力
         for button_name in &button_names {
             values.push(frame.buttons.get(button_name).unwrap_or(&0).to_string());
         }
-        
+
         writeln!(file, "{}", values.join(","))
             .map_err(|e| format!("書き込みエラー: {}", e))?;
     }
-    
+
     // 保存後にキャッシュをクリア（次回読み込み時に最新のファイルを読む）
     let mut cache = state.frame_cache.lock().unwrap();
     let was_cached = cache.remove(&normalized_path).is_some();
     println!("[save_frames_for_edit] キャッシュクリア完了 - キャッシュにあった: {}", was_cached);
     println!("[save_frames_for_edit] 保存完了 - {}行を書き込み", frame_count);
-    
+
     Ok(())
 }
 
@@ -452,16 +465,16 @@ fn open_editor_test(app: tauri::AppHandle, csv_path: String) -> Result<(), Strin
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     use base64::{Engine as _, engine::general_purpose};
-    
+
     println!("========== open_editor_test (simple HTML) ==========");
-    
+
     let mut hasher = DefaultHasher::new();
     csv_path.hash(&mut hasher);
     let window_label = format!("test_{}", hasher.finish());
-    
+
     let encoded_path = general_purpose::STANDARD.encode(csv_path.as_bytes());
     let url = format!("editor-test.html?csvPath={}", encoded_path);
-    
+
     let window = tauri::WebviewWindowBuilder::new(
         &app,
         &window_label,
@@ -473,7 +486,7 @@ fn open_editor_test(app: tauri::AppHandle, csv_path: String) -> Result<(), Strin
     .focused(true)
     .build()
     .map_err(|e| e.to_string())?;
-    
+
     #[cfg(debug_assertions)]
     {
         let w = window.clone();
@@ -482,7 +495,7 @@ fn open_editor_test(app: tauri::AppHandle, csv_path: String) -> Result<(), Strin
             w.open_devtools();
         });
     }
-    
+
     println!("✓ Test window created");
     Ok(())
 }
@@ -491,29 +504,29 @@ fn open_editor_test(app: tauri::AppHandle, csv_path: String) -> Result<(), Strin
 fn open_editor_window(app: tauri::AppHandle, csv_path: String) -> Result<(), String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     println!("========== open_editor_window ==========");
     println!("CSV path: {}", csv_path);
-    
+
     // ウィンドウラベルを一意にするためにパスのハッシュを使用
     let mut hasher = DefaultHasher::new();
     csv_path.hash(&mut hasher);
     let window_label = format!("editor_{}", hasher.finish());
     println!("Window label: {}", window_label);
-    
+
     // 既存のウィンドウがあれば閉じる
     if let Some(window) = app.get_webview_window(&window_label) {
         println!("Closing existing window...");
         let _ = window.close();
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    
+
     // Base64エンコードされたCSVパスをクエリパラメータとして追加
     use base64::{Engine as _, engine::general_purpose};
     let encoded_path = general_purpose::STANDARD.encode(csv_path.as_bytes());
     let url = format!("editor.html?csvPath={}", encoded_path);
     println!("Opening URL: {}", url);
-    
+
     // 新しいエディタウィンドウを開く
     println!("Building window with URL: {}", url);
     let builder = tauri::WebviewWindowBuilder::new(
@@ -538,16 +551,16 @@ fn open_editor_window(app: tauri::AppHandle, csv_path: String) -> Result<(), Str
         });
         console.log('Initialization complete');
     "#);
-    
+
     let window = builder.build().map_err(|e| {
         eprintln!("✗ Failed to build editor window: {}", e);
         e.to_string()
     })?;
-    
+
     println!("✓ Editor window created");
     println!("  Label: {}", window.label());
     println!("  Title: {:?}", window.title());
-    
+
     // ウィンドウの状態をチェック
     if let Ok(visible) = window.is_visible() {
         println!("  Visible: {}", visible);
@@ -555,7 +568,7 @@ fn open_editor_window(app: tauri::AppHandle, csv_path: String) -> Result<(), Str
     if let Ok(focused) = window.is_focused() {
         println!("  Focused: {}", focused);
     }
-    
+
     // イベントリスナーを追加してウィンドウのロード状態を監視
     let label = window.label().to_string();
     window.on_window_event(move |event| {
@@ -578,7 +591,7 @@ fn open_editor_window(app: tauri::AppHandle, csv_path: String) -> Result<(), Str
             _ => {}
         }
     });
-    
+
     // 少し待ってから開発者ツールを開く
     #[cfg(debug_assertions)]
     {
@@ -590,7 +603,7 @@ fn open_editor_window(app: tauri::AppHandle, csv_path: String) -> Result<(), Str
             println!("✓ DevTools command sent");
         });
     }
-    
+
     Ok(())
 }
 
@@ -607,7 +620,7 @@ pub fn run() {
     let controller_clone = app_state.controller.clone();
     let player_clone = app_state.player.clone();
     let fps_clone = app_state.fps.clone();
-    
+
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
@@ -617,28 +630,28 @@ pub fn run() {
                     let fps = fps_clone.lock().unwrap();
                     *fps
                 };
-                
+
                 let interval_ms = 1000 / current_fps;
                 let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(interval_ms as u64));
-                
+
                 // FPSが変更されるまでの間ループ
                 let last_fps = current_fps;
                 loop {
                     interval.tick().await;
-                    
+
                     // FPSが変更されたかチェック
                     let current_fps = {
                         let fps = fps_clone.lock().unwrap();
                         *fps
                     };
-                    
+
                     if current_fps != last_fps {
                         // FPSが変更されたので外側ループに戻ってintervalを再生成
                         break;
                     }
-                    
+
                     let player = player_clone.lock().unwrap();
-                    
+
                     if player.is_playing() {
                         drop(player);
                         let mut player = player_clone.lock().unwrap();
@@ -659,26 +672,26 @@ pub fn run() {
             disconnect_controller,
             is_controller_connected,
             load_input_file,
+            load_input_sequence,
             start_playback,
             stop_playback,
             pause_playback,
             resume_playback,
-            set_invert_horizontal,
+            reload_current_sequence,
             set_loop_playback,
+            set_invert_horizontal,
             is_playing,
             get_playback_progress,
             load_button_mapping,
             save_button_mapping,
             update_manual_input,
-            get_csv_button_names,
             set_fps,
             get_fps,
+            get_csv_button_names,
             load_frames_for_edit,
             save_frames_for_edit,
             get_current_playing_frame,
             open_editor_window,
-            open_editor_test,
-            reload_current_sequence,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -73,33 +73,46 @@ impl Player {
             return Ok(false);
         }
 
+        // 現在のフレームが範囲外の場合、ループまたは停止
         if self.current_frame >= self.frames.len() {
+            println!(
+                "[Player::update] current_frame={} >= frames.len()={}",
+                self.current_frame,
+                self.frames.len()
+            );
+            println!("[Player::update] loop_playback={}", self.loop_playback);
             if self.loop_playback {
                 // ループ再生の場合は最初から再生
+                println!("[Player] ループ再生: 先頭に戻ります");
                 self.current_frame = 0;
                 self.current_frame_count = 0;
             } else {
+                println!("[Player] ループなし: 再生停止");
                 self.is_playing = false;
                 return Ok(false);
             }
         }
 
         let frame = &self.frames[self.current_frame];
-        
+
         // ボタンマッピングを適用（複数のCSVボタンが同じXboxボタンに割り当てられている場合はOR結合）
         let mut mapped_frame = frame.clone();
         let mut mapped_buttons = HashMap::new();
-        
+
         for (csv_button, value) in &frame.buttons {
             if let Some(xbox_button) = self.button_mapping.get(csv_button) {
                 // 既存の値とOR結合（どちらかが1なら1）
                 let current_value = mapped_buttons.get(xbox_button).unwrap_or(&0);
-                let new_value = if *current_value == 1 || *value == 1 { 1 } else { 0 };
+                let new_value = if *current_value == 1 || *value == 1 {
+                    1
+                } else {
+                    0
+                };
                 mapped_buttons.insert(xbox_button.clone(), new_value);
             }
         }
         mapped_frame.buttons = mapped_buttons;
-        
+
         // コントローラーに入力を送信（エラーは無視して再生は継続）
         let _ = controller.update_input(&mapped_frame, self.invert_horizontal);
 
@@ -109,6 +122,16 @@ impl Player {
         if self.current_frame_count >= frame.duration {
             self.current_frame += 1;
             self.current_frame_count = 0;
+
+            // フレームを進めた後、範囲チェックとループ処理
+            if self.current_frame >= self.frames.len() {
+                if self.loop_playback {
+                    println!("[Player] ループ再生: フレーム進行後に先頭に戻ります");
+                    self.current_frame = 0;
+                    self.current_frame_count = 0;
+                }
+                // ループしない場合は次回のupdate()で停止する
+            }
         }
 
         Ok(true)
@@ -123,10 +146,10 @@ impl Player {
             }
         }
         elapsed_frames += self.current_frame_count;
-        
+
         // 総フレーム数を計算（全durationの合計）
         let total_frames: u32 = self.frames.iter().map(|f| f.duration).sum();
-        
+
         (elapsed_frames as usize, total_frames as usize)
     }
 

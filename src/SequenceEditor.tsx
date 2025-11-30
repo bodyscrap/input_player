@@ -9,37 +9,45 @@ interface InputFrame {
 
 interface SequenceEditorProps {
   csvPath: string;
-  onClose: () => void;
+  onClose: (savedPath?: string) => void; // 保存されたパスを返す
   currentPlayingRow: number | null; // 現在再生中の行（外部から制御）
   sequenceButtons: string[]; // シーケンスで使用可能なボタンのリスト
 }
 
-function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }: SequenceEditorProps) {
+function SequenceEditor({
+  csvPath,
+  onClose,
+  currentPlayingRow,
+  sequenceButtons,
+}: SequenceEditorProps) {
   console.log("========== SequenceEditor component created ==========");
   console.log("Props - csvPath:", csvPath);
   console.log("Props - currentPlayingRow:", currentPlayingRow);
-  
+
   const [frames, setFrames] = useState<InputFrame[]>([]);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [buttonNames, setButtonNames] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
+  const [lastSavedPath, setLastSavedPath] = useState<string | null>(null); // 最後に保存したパス
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localIsPlaying, setLocalIsPlaying] = useState(false);
   const [internalPlayingRow, setInternalPlayingRow] = useState<number>(-1);
-  
+
   // 再生中かどうかを判定（ローカル状態または外部状態）
-  const isPlaying = localIsPlaying || (currentPlayingRow !== null && currentPlayingRow >= 0);
+  const isPlaying =
+    localIsPlaying || (currentPlayingRow !== null && currentPlayingRow >= 0);
   // 表示用の行番号: internalPlayingRowが有効(-1以外)ならそれを使用、そうでなければcurrentPlayingRow
-  const displayPlayingRow = internalPlayingRow >= 0 ? internalPlayingRow : currentPlayingRow;
+  const displayPlayingRow =
+    internalPlayingRow >= 0 ? internalPlayingRow : currentPlayingRow;
 
   console.log("[SequenceEditor] State:", {
     localIsPlaying,
     internalPlayingRow,
     currentPlayingRow,
     isPlaying,
-    displayPlayingRow
+    displayPlayingRow,
   });
 
   useEffect(() => {
@@ -56,7 +64,9 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
   useEffect(() => {
     const playingRow = displayPlayingRow;
     if (playingRow !== null && playingRow >= 0 && scrollRef.current) {
-      const rowElement = scrollRef.current.querySelector(`[data-row="${playingRow}"]`);
+      const rowElement = scrollRef.current.querySelector(
+        `[data-row="${playingRow}"]`,
+      );
       if (rowElement) {
         rowElement.scrollIntoView({ behavior: "smooth", block: "center" });
       }
@@ -65,9 +75,12 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
 
   // 再生中は再生状態をポーリング
   useEffect(() => {
-    console.log("[SequenceEditor] ポーリング useEffect - localIsPlaying:", localIsPlaying);
+    console.log(
+      "[SequenceEditor] ポーリング useEffect - localIsPlaying:",
+      localIsPlaying,
+    );
     if (!localIsPlaying) return;
-    
+
     console.log("[SequenceEditor] ポーリング開始");
     const interval = setInterval(async () => {
       try {
@@ -77,7 +90,10 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
           // 再生が終了した
           // 最終フレームのハイライトを保持
           const finalFrame = frames.length - 1;
-          console.log("[SequenceEditor] 再生終了検知 - 最終フレームに設定:", finalFrame);
+          console.log(
+            "[SequenceEditor] 再生終了検知 - 最終フレームに設定:",
+            finalFrame,
+          );
           setInternalPlayingRow(finalFrame);
           setLocalIsPlaying(false);
           setMessage("再生が終了しました");
@@ -86,7 +102,12 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
           try {
             const frame = await api.getCurrentPlayingFrame();
             if (frame !== internalPlayingRow) {
-              console.log("[SequenceEditor] フレーム更新:", internalPlayingRow, "→", frame);
+              console.log(
+                "[SequenceEditor] フレーム更新:",
+                internalPlayingRow,
+                "→",
+                frame,
+              );
             }
             setInternalPlayingRow(frame);
           } catch (e) {
@@ -97,7 +118,7 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
         console.error("[SequenceEditor] 再生状態の確認エラー:", error);
       }
     }, 16); // 約60FPS (16ms)ごとにチェック
-    
+
     return () => {
       console.log("[SequenceEditor] ポーリング停止");
       clearInterval(interval);
@@ -111,19 +132,19 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
       console.log("API imported, calling loadFramesForEdit...");
       const loadedFrames = await api.loadFramesForEdit(csvPath);
       console.log("✓ Frames loaded:", loadedFrames.length, "frames");
-      
+
       // シーケンスボタンのみを使用（非破壊的にソート）
       const buttonNamesArray = [...sequenceButtons].sort();
       console.log("✓ Button names (sequence buttons only):", buttonNamesArray);
-      
+
       // 各フレームのボタンをsequenceButtonsのみに制限
       const filteredFrames = loadedFrames.map((frame: InputFrame) => ({
         ...frame,
         buttons: Object.fromEntries(
-          buttonNamesArray.map(btn => [btn, frame.buttons[btn] ?? 0])
-        )
+          buttonNamesArray.map((btn) => [btn, frame.buttons[btn] ?? 0]),
+        ),
       }));
-      
+
       setFrames(filteredFrames);
       setButtonNames(buttonNamesArray);
       setMessage(`${csvPath}を読み込みました (${loadedFrames.length}行)`);
@@ -142,18 +163,18 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
     const newFrame: InputFrame = {
       duration: 1,
       direction: 5,
-      buttons: Object.fromEntries(sequenceButtons.map(btn => [btn, 0])),
+      buttons: Object.fromEntries(sequenceButtons.map((btn) => [btn, 0])),
     };
-    
+
     console.log("[addRow] 新規フレーム作成:", newFrame);
     console.log("[addRow] sequenceButtons:", sequenceButtons);
-    
+
     const newFrames = [...frames];
     const insertIndex = afterIndex !== null ? afterIndex + 1 : frames.length;
     newFrames.splice(insertIndex, 0, newFrame);
-    
+
     console.log("[addRow] 更新後のフレーム数:", newFrames.length);
-    
+
     setFrames(newFrames);
     setHasChanges(true);
     setMessage("行を追加しました");
@@ -168,20 +189,22 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
       setMessage("削除する行を選択してください");
       return;
     }
-    
+
     if (frames.length - selectedRows.size < 1) {
       setMessage("最低1行は残す必要があります");
       return;
     }
-    
+
     const indices = Array.from(selectedRows).sort((a, b) => b - a);
     const newFrames = frames.filter((_, i) => !selectedRows.has(i));
-    
+
     // ハイライト位置が削除された行より後ろにある場合は調整
     if (internalPlayingRow >= 0) {
-      const deletedBeforePlayingRow = Array.from(selectedRows).filter(idx => idx < internalPlayingRow).length;
+      const deletedBeforePlayingRow = Array.from(selectedRows).filter(
+        (idx) => idx < internalPlayingRow,
+      ).length;
       const newPlayingRow = internalPlayingRow - deletedBeforePlayingRow;
-      
+
       // 削除された行がハイライト行自身だった場合はハイライトを削除
       if (selectedRows.has(internalPlayingRow)) {
         setInternalPlayingRow(-1);
@@ -192,7 +215,7 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
         setInternalPlayingRow(newPlayingRow);
       }
     }
-    
+
     setFrames(newFrames);
     setSelectedRows(new Set());
     setSelectedRow(null);
@@ -205,18 +228,19 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
       setMessage("再生中は保存できません");
       return;
     }
-    
+
     // 一時ファイル（新規作成）の場合は別名保存を実行
     if (csvPath.startsWith("temp_new_sequence_")) {
       await handleSaveAs();
       return;
     }
-    
+
     try {
       const { api } = await import("./api");
       // 元のファイルに直接上書き
       await api.saveFramesForEdit(csvPath, frames);
       setHasChanges(false);
+      setLastSavedPath(csvPath); // 保存パスを記録
       setMessage("✓ 保存しました");
     } catch (error) {
       setMessage(`保存エラー: ${error}`);
@@ -230,26 +254,30 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
     }
     try {
       const { save } = await import("@tauri-apps/plugin-dialog");
-      
+
       // ファイル名の初期値を元のパスから取得
       const fileName = csvPath.split(/[\\/]/).pop() || "sequence.csv";
-      
+
       // 保存ダイアログを表示
       const savePath = await save({
         defaultPath: fileName,
-        filters: [{
-          name: "CSV Files",
-          extensions: ["csv"]
-        }]
+        filters: [
+          {
+            name: "CSV Files",
+            extensions: ["csv"],
+          },
+        ],
       });
-      
+
       if (!savePath) {
         setMessage("保存がキャンセルされました");
         return;
       }
-      
+
       const { api } = await import("./api");
       await api.saveFramesForEdit(savePath, frames);
+      setHasChanges(false);
+      setLastSavedPath(savePath); // 保存パスを記録
       setMessage(`✓ 別名保存しました: ${savePath}`);
     } catch (error) {
       setMessage(`保存エラー: ${error}`);
@@ -261,10 +289,16 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
       // 停止処理
       try {
         const { api } = await import("./api");
-        console.log("[SequenceEditor] 停止前 - internalPlayingRow:", internalPlayingRow);
+        console.log(
+          "[SequenceEditor] 停止前 - internalPlayingRow:",
+          internalPlayingRow,
+        );
         await api.stopPlayback();
         setLocalIsPlaying(false);
-        console.log("[SequenceEditor] 停止後 - internalPlayingRowを保持:", internalPlayingRow);
+        console.log(
+          "[SequenceEditor] 停止後 - internalPlayingRowを保持:",
+          internalPlayingRow,
+        );
         setMessage("再生を停止しました");
       } catch (error) {
         console.error("停止エラー:", error);
@@ -276,25 +310,33 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
         const { api } = await import("./api");
         console.log("[SequenceEditor] 再生開始 - フレーム数:", frames.length);
         console.log("[SequenceEditor] 最初のフレーム:", frames[0]);
-        console.log("[SequenceEditor] 最後のフレーム:", frames[frames.length - 1]);
-        
+        console.log(
+          "[SequenceEditor] 最後のフレーム:",
+          frames[frames.length - 1],
+        );
+
         // 編集内容を一時的に保存してから再生
         console.log("[SequenceEditor] 保存中...");
         await api.saveFramesForEdit(csvPath, frames);
         console.log("[SequenceEditor] 保存完了");
-        
+
         console.log("[SequenceEditor] 読み込み中...");
         const frameCount = await api.loadInputFile(csvPath);
         console.log("[SequenceEditor] 読み込み完了 - フレーム数:", frameCount);
-        
+
         if (frameCount !== frames.length) {
-          console.warn("[SequenceEditor] ⚠️ フレーム数不一致! 保存:", frames.length, "読み込み:", frameCount);
+          console.warn(
+            "[SequenceEditor] ⚠️ フレーム数不一致! 保存:",
+            frames.length,
+            "読み込み:",
+            frameCount,
+          );
         }
-        
+
         console.log("[SequenceEditor] 再生開始API呼び出し前");
         await api.startPlayback();
         console.log("[SequenceEditor] 再生開始API呼び出し後");
-        
+
         console.log("[SequenceEditor] setLocalIsPlaying(true) 呼び出し");
         setLocalIsPlaying(true);
         console.log("[SequenceEditor] setInternalPlayingRow(0) 呼び出し");
@@ -303,7 +345,10 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
         setMessage(`再生を開始しました (${frameCount}フレーム)`);
       } catch (error) {
         console.error("[SequenceEditor] ❌ 再生エラー:", error);
-        console.error("[SequenceEditor] エラー詳細:", JSON.stringify(error, null, 2));
+        console.error(
+          "[SequenceEditor] エラー詳細:",
+          JSON.stringify(error, null, 2),
+        );
         setMessage(`再生エラー: ${error}`);
         alert(`再生エラーが発生しました: ${error}`);
       }
@@ -350,14 +395,19 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     // ESCキーで閉じる
-    if (event.key === 'Escape') {
+    if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
+      onClose(lastSavedPath || undefined);
       return;
     }
-    
+
     // スペースキーで最終行に追加
-    if (event.key === ' ' && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+    if (
+      event.key === " " &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey
+    ) {
       // input要素にフォーカスがある場合は無視
       if (event.target instanceof HTMLInputElement) {
         return;
@@ -366,62 +416,106 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
       handleAddRow();
       return;
     }
-    
-    if (event.key === 'Delete') {
+
+    if (event.key === "Delete") {
       deleteSelected();
     }
   };
 
   const directionArrows: Record<number, string> = {
-    1: "↙", 2: "↓", 3: "↘",
-    4: "←", 5: "N", 6: "→",
-    7: "↖", 8: "↑", 9: "↗",
+    1: "↙",
+    2: "↓",
+    3: "↘",
+    4: "←",
+    5: "N",
+    6: "→",
+    7: "↖",
+    8: "↑",
+    9: "↗",
   };
 
   return (
-    <div className="sequence-editor-overlay" onClick={onClose}>
-      <div className="sequence-editor-window" onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown} tabIndex={0}>
+    <div
+      className="sequence-editor-overlay"
+      onClick={() => onClose(lastSavedPath || undefined)}
+    >
+      <div
+        className="sequence-editor-window"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
+      >
         <div className="editor-header">
           <h2>シーケンス編集</h2>
-          <div style={{fontSize: '11px', color: '#888', marginBottom: '4px'}}>
-            Debug: playing={localIsPlaying ? 'true' : 'false'}, row={internalPlayingRow}, frames={frames.length}
+          <div style={{ fontSize: "11px", color: "#888", marginBottom: "4px" }}>
+            Debug: playing={localIsPlaying ? "true" : "false"}, row=
+            {internalPlayingRow}, frames={frames.length}
           </div>
           <div className="editor-header-buttons">
-            <button onClick={handleSave} disabled={!hasChanges || isPlaying} className="btn-save">
+            <button
+              onClick={handleSave}
+              disabled={!hasChanges || isPlaying}
+              className="btn-save"
+            >
               💾 保存
             </button>
-            <button onClick={handleSaveAs} disabled={isPlaying} className="btn-save">
+            <button
+              onClick={handleSaveAs}
+              disabled={isPlaying}
+              className="btn-save"
+            >
               💾️ 別名保存
             </button>
-            <button 
-              onClick={handleReload} 
-              disabled={hasChanges || isPlaying} 
-              className="btn-reload" 
-              title={hasChanges ? "保存後に反映できます" : "保存済みの内容をスロットに反映"}
+            <button
+              onClick={handleReload}
+              disabled={hasChanges || isPlaying}
+              className="btn-reload"
+              title={
+                hasChanges
+                  ? "保存後に反映できます"
+                  : "保存済みの内容をスロットに反映"
+              }
             >
               🔄 スロットに反映
             </button>
-            <button onClick={onClose} className="btn-close">✕</button>
+            <button
+              onClick={() => onClose(lastSavedPath || undefined)}
+              className="btn-close"
+            >
+              ✕
+            </button>
           </div>
         </div>
 
         <div className="editor-toolbar">
           <div className="toolbar-left">
-            <button onClick={handlePlayStop} className={`btn-toolbar ${isPlaying ? 'btn-stop' : 'btn-play'}`}>
-              {isPlaying ? '■ 停止' : '▶ 再生'}
+            <button
+              onClick={handlePlayStop}
+              className={`btn-toolbar ${isPlaying ? "btn-stop" : "btn-play"}`}
+            >
+              {isPlaying ? "■ 停止" : "▶ 再生"}
             </button>
             <div className="toolbar-divider"></div>
-            <button onClick={() => addRow(selectedRow)} disabled={isPlaying} className="btn-toolbar">
+            <button
+              onClick={() => addRow(selectedRow)}
+              disabled={isPlaying}
+              className="btn-toolbar"
+            >
               ➕ 行追加
             </button>
-            <button onClick={deleteSelected} disabled={selectedRows.size === 0 || isPlaying} className="btn-toolbar">
+            <button
+              onClick={deleteSelected}
+              disabled={selectedRows.size === 0 || isPlaying}
+              className="btn-toolbar"
+            >
               ❌ 削除 (Del)
             </button>
           </div>
           <div className="toolbar-right">
             <span className="editor-message">{message}</span>
             <span className="editor-status">
-              総行数: {frames.length} {hasChanges && "(未保存)"} {isPlaying && "🔴 再生中"}
+              総行数: {frames.length} {hasChanges && "(未保存)"}{" "}
+              {isPlaying && "🔴 再生中"}
             </span>
           </div>
         </div>
@@ -435,7 +529,9 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
                   <th className="col-duration">持続F</th>
                   <th className="col-direction">方向</th>
                   {buttonNames.map((name) => (
-                    <th key={name} className="col-button">{name}</th>
+                    <th key={name} className="col-button">
+                      {name}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -443,12 +539,12 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
                 {frames.map((frame, index) => {
                   const isSelected = selectedRows.has(index);
                   const isPlayingThisRow = displayPlayingRow === index;
-                  
+
                   return (
                     <tr
                       key={index}
                       data-row={index}
-                      className={`${isSelected ? 'selected' : ''} ${isPlayingThisRow ? 'playing' : ''}`}
+                      className={`${isSelected ? "selected" : ""} ${isPlayingThisRow ? "playing" : ""}`}
                       onClick={(e) => handleRowClick(index, e)}
                     >
                       <td className="col-select">{index + 1}</td>
@@ -460,7 +556,10 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
                           disabled={isPlaying}
                           onChange={(e) => {
                             const newFrames = [...frames];
-                            newFrames[index].duration = Math.max(1, parseInt(e.target.value) || 1);
+                            newFrames[index].duration = Math.max(
+                              1,
+                              parseInt(e.target.value) || 1,
+                            );
                             setFrames(newFrames);
                             setHasChanges(true);
                           }}
@@ -473,7 +572,9 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
                           disabled={isPlaying}
                           onChange={(e) => {
                             const newFrames = [...frames];
-                            newFrames[index].direction = parseInt(e.target.value);
+                            newFrames[index].direction = parseInt(
+                              e.target.value,
+                            );
                             setFrames(newFrames);
                             setHasChanges(true);
                           }}
@@ -494,7 +595,9 @@ function SequenceEditor({ csvPath, onClose, currentPlayingRow, sequenceButtons }
                             disabled={isPlaying}
                             onChange={(e) => {
                               const newFrames = [...frames];
-                              newFrames[index].buttons[name] = e.target.checked ? 1 : 0;
+                              newFrames[index].buttons[name] = e.target.checked
+                                ? 1
+                                : 0;
                               setFrames(newFrames);
                               setHasChanges(true);
                             }}
