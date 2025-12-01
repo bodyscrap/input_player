@@ -6,18 +6,20 @@ mod player;
 use controller::Controller;
 use csv_loader::load_csv;
 use player::Player;
-use types::{ButtonMapping, ControllerType, InputFrame};
+use types::{ButtonMapping, ControllerType, InputFrame, SequenceState};
 
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::collections::HashMap;
-use tauri::{State, Manager};
+use tauri::{Emitter, State, Manager};
 
 struct AppState {
     controller: Arc<Mutex<Controller>>,
     player: Arc<Mutex<Player>>,
     fps: Arc<Mutex<u32>>,
     frame_cache: Arc<Mutex<std::collections::HashMap<String, Vec<InputFrame>>>>, // パス -> フレームデータのキャッシュ
+    manual_input: Arc<Mutex<InputFrame>>, // 手動入力の現在状態
+    app_handle: Arc<Mutex<Option<tauri::AppHandle>>>, // イベント発行用
 }
 
 // Tauri commands
@@ -121,9 +123,9 @@ fn load_input_file(path: String, state: State<AppState>) -> Result<usize, String
 fn start_playback(state: State<AppState>) -> Result<(), String> {
     let mut player = state.player.lock().unwrap();
     let frame_count = player.frames.len();
-    println!("[start_playback] 開始 - フレーム数: {}", frame_count);
+    println!("[start_playback] シーケンスモード開始 - フレーム数: {}", frame_count);
     player.start();
-    println!("[start_playback] is_playing = true に設定");
+    println!("[start_playback] 状態: Playing (マニュアルモード無効)");
     Ok(())
 }
 
@@ -131,6 +133,7 @@ fn start_playback(state: State<AppState>) -> Result<(), String> {
 fn stop_playback(state: State<AppState>) -> Result<(), String> {
     let mut player = state.player.lock().unwrap();
     player.stop();
+    println!("[stop_playback] シーケンスモード停止 (マニュアルモード有効)");
     Ok(())
 }
 
@@ -182,10 +185,10 @@ fn set_invert_horizontal(invert: bool, state: State<AppState>) -> Result<(), Str
 #[tauri::command]
 fn is_playing(state: State<AppState>) -> bool {
     let player = state.player.lock().unwrap();
-    let playing = player.is_playing();
+    let playing = player.get_state() == SequenceState::Playing;
     let frame_count = player.frames.len();
-    let current_frame = player.get_current_frame();
-    println!("[is_playing] チェック: playing={}, frames={}, current={}", playing, frame_count, current_frame);
+    let current_step = player.get_current_step();
+    println!("[is_playing] チェック: playing={}, frames={}, current={}", playing, frame_count, current_step);
     playing
 }
 
@@ -273,25 +276,28 @@ fn update_manual_input(
     buttons: std::collections::HashMap<String, u8>,
     state: State<AppState>,
 ) -> Result<(), String> {
+    // 再生モード中はマニュアル入力を無視
+    let player = state.player.lock().unwrap();
+    let is_playing = player.get_state() == SequenceState::Playing;
+    drop(player);
+
+    if is_playing {
+        return Ok(()); // 再生中は無視
+    }
+
     let mut controller = state.controller.lock().unwrap();
 
     if !controller.is_connected() {
         return Err("Controller not connected".to_string());
     }
 
-    let frame = InputFrame {
-        duration: 1,
-        direction,
-        buttons,
-        thumb_lx: 0,
-        thumb_ly: 0,
-        thumb_rx: 0,
-        thumb_ry: 0,
-        left_trigger: 0,
-        right_trigger: 0,
-    };
-
-    controller.update_input(&frame, false)
+    // マニュアルモード: 手動入力の状態を更新して即座にコントローラーに送信
+    let mut manual_input = state.manual_input.lock().unwrap();
+    manual_input.direction = direction;
+    manual_input.buttons = buttons.clone();
+    
+    // 即座にコントローラーに送信
+    controller.update_input(&manual_input, false)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -304,6 +310,12 @@ fn set_fps(fps: u32, state: State<AppState>) -> Result<(), String> {
     }
     let mut current_fps = state.fps.lock().unwrap();
     *current_fps = fps;
+    drop(current_fps);
+    
+    // Playerにも新しいFPSを設定
+    let mut player = state.player.lock().unwrap();
+    player.set_fps(fps);
+    
     Ok(())
 }
 
@@ -457,7 +469,7 @@ fn save_frames_for_edit(path: String, frames: Vec<InputFrame>, state: State<AppS
 #[tauri::command]
 fn get_current_playing_frame(state: State<AppState>) -> usize {
     let player = state.player.lock().unwrap();
-    player.get_current_frame()
+    player.get_current_step()
 }
 
 #[tauri::command]
@@ -613,13 +625,26 @@ pub fn run() {
         controller: Arc::new(Mutex::new(Controller::new())),
         player: Arc::new(Mutex::new(Player::new())),
         fps: Arc::new(Mutex::new(60)),
-        frame_cache: Arc::new(Mutex::new(HashMap::new())),
+        frame_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        manual_input: Arc::new(Mutex::new(InputFrame {
+            duration: 1,
+            direction: 5,
+            buttons: HashMap::new(),
+            thumb_lx: 0,
+            thumb_ly: 0,
+            thumb_rx: 0,
+            thumb_ry: 0,
+            left_trigger: 0,
+            right_trigger: 0,
+        })),
+        app_handle: Arc::new(Mutex::new(None)),
     };
 
     // FPS設定に基づいて更新するタスクを起動
     let controller_clone = app_state.controller.clone();
     let player_clone = app_state.player.clone();
     let fps_clone = app_state.fps.clone();
+    let app_handle_clone = app_state.app_handle.clone();
 
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -650,14 +675,42 @@ pub fn run() {
                         break;
                     }
 
-                    let player = player_clone.lock().unwrap();
+                    // コントローラーが接続されていない場合はスキップ
+                    let controller = controller_clone.lock().unwrap();
+                    if !controller.is_connected() {
+                        drop(controller);
+                        continue;
+                    }
+                    drop(controller);
 
-                    if player.is_playing() {
-                        drop(player);
+                    // シーケンスモード専用のループ
+                    // マニュアルモードの入力は update_manual_input で即座に送信されるため、ここでは処理しない
+                    let player = player_clone.lock().unwrap();
+                    let state = player.get_state();
+                    drop(player);
+
+                    if state == SequenceState::Playing {
+                        // シーケンス再生モード: プレイヤーの update を呼ぶ
                         let mut player = player_clone.lock().unwrap();
                         let mut controller = controller_clone.lock().unwrap();
-                        let _ = player.update(&mut controller);
+                        if let Ok((_sent, state_changed)) = player.update(&mut controller) {
+                            if state_changed {
+                                let new_state = player.get_state();
+                                
+                                // フロントエンドにイベント送信（ログは最小限に）
+                                if let Some(app) = app_handle_clone.lock().unwrap().as_ref() {
+                                    let state_str = match new_state {
+                                        SequenceState::Playing => "playing",
+                                        SequenceState::Stopped => "stopped",
+                                        SequenceState::NoSequence => "no_sequence",
+                                    };
+                                    let _ = app.emit("playback-state-changed", state_str);
+                                    println!("[State] {:?}", new_state); // 状態変化のみ簡潔にログ
+                                }
+                            }
+                        }
                     }
+                    // マニュアルモード時はこのループでは何もしない（update_manual_inputで即座に送信）
                 }
             }
         });
@@ -666,6 +719,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(move |app| {
+            // AppHandleを保存
+            let handle = app.handle().clone();
+            let state: tauri::State<AppState> = app.state();
+            *state.app_handle.lock().unwrap() = Some(handle);
+            Ok(())
+        })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             connect_controller,

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import "./App.css";
 import { api } from "./api";
+import { listen } from "@tauri-apps/api/event";
 import ButtonMappingEditor from "./ButtonMappingEditor";
 import SequenceSelector from "./SequenceSelector";
 import SequenceEditor from "./SequenceEditor";
@@ -16,8 +17,8 @@ function App() {
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
   const [invertHorizontal, setInvertHorizontal] = useState(false);
-  const [currentFrame, setCurrentFrame] = useState(0);
-  const [totalFrames, setTotalFrames] = useState(0);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [totalSteps, setTotalSteps] = useState(0);
 
   // POV (D-pad) direction - using numpad notation
   const [povDirection, setPovDirection] = useState(5); // 5 = neutral
@@ -47,7 +48,7 @@ function App() {
   const [sequenceChain, setSequenceChain] = useState<number[]>([]); // スロット番号の配列
   const [isPlayingChain, setIsPlayingChain] = useState(false);
   const [currentChainIndex, setCurrentChainIndex] = useState(0);
-  const [chainFrameMap, setChainFrameMap] = useState<number[]>([]); // 各シーケンスの開始フレーム位置
+  const [chainStepMap, setChainStepMap] = useState<number[]>([]); // 各シーケンスの開始ステップ位置
 
   // Sequence editor state (modal)
   const [showSequenceEditor, setShowSequenceEditor] = useState(false);
@@ -73,6 +74,30 @@ function App() {
     loadFps();
   }, []);
 
+  // バックエンドからの再生状態変化イベントをリッスン
+  useEffect(() => {
+    const unlisten = listen<string>("playback-state-changed", (event) => {
+      console.log("[Event] 再生状態変化:", event.payload);
+      
+      if (event.payload === "stopped" || event.payload === "no_sequence") {
+        // 停止状態に遷移
+        setIsPlaying(false);
+        setPlayingSlot(null);
+        if (isPlayingChain) {
+          console.log("[Event] チェーン再生終了");
+          setIsPlayingChain(false);
+        }
+      } else if (event.payload === "playing") {
+        // 再生開始（通常はフロントエンドから開始するので不要だが念のため）
+        setIsPlaying(true);
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [isPlayingChain]);
+
   // Update refs whenever state changes
   useEffect(() => {
     povDirectionRef.current = povDirection;
@@ -86,13 +111,14 @@ function App() {
     activeTestButtonRef.current = activeTestButton;
   }, [activeTestButton]);
 
-  // Update playback progress and auto-stop when finished
+  // Update playback progress
+  // バックエンド優先: 更新頻度を下げてバックエンドのCPU負荷を軽減
   useEffect(() => {
     const interval = setInterval(async () => {
       if (isPlaying) {
         const [current, total] = await api.getPlaybackProgress();
-        setCurrentFrame(current);
-        setTotalFrames(total);
+        setCurrentStep(current);
+        setTotalSteps(total);
 
         // エディタ表示中は再生中のフレーム番号も取得
         if (showSequenceEditor) {
@@ -103,41 +129,10 @@ function App() {
             // エラーは無視（再生中でない場合など）
           }
         }
-
-        // 最後まで再生したら自動停止またはループ
-        if (current >= total && total > 0) {
-          console.log(
-            "[Progress Monitor] シーケンス終了検知 - current:",
-            current,
-            "total:",
-            total,
-            "isPlayingChain:",
-            isPlayingChain,
-            "loopPlayback:",
-            loopPlayback,
-          );
-
-          if (loopPlayback) {
-            // ループ再生: Rust側が自動でループするので何もしない
-            console.log(
-              "[Progress Monitor] ループ再生中 - Rust側が自動でループします（stopPlaybackを呼ばない）",
-            );
-            // stopPlaybackを呼ばないことで、Rust側のループ処理が実行される
-          } else {
-            // ループなし: 停止
-            await api.stopPlayback();
-            if (isPlayingChain) {
-              console.log("[Progress Monitor] チェーン再生終了");
-              setIsPlayingChain(false);
-            }
-            setIsPlaying(false);
-            setPlayingSlot(null);
-          }
-        }
       } else {
         // 再生停止時はハイライトをリセットしない（停止位置を保持）
       }
-    }, 100);
+    }, 200); // 100ms → 200ms (5FPS表示更新、バックエンドは60FPSで動作)
 
     return () => clearInterval(interval);
   }, [isPlaying, loopPlayback, isPlayingChain, showSequenceEditor]);
@@ -301,8 +296,8 @@ function App() {
     try {
       // メモリ上のフレームデータを使用して再生
       await api.loadInputSequence(slot.frames);
-      setTotalFrames(slot.frames.length);
-      setCurrentFrame(0);
+      setTotalSteps(slot.frames.length);
+      setCurrentStep(0);
 
       await api.setInvertHorizontal(invertHorizontal);
       await api.setLoopPlayback(loopPlayback);
@@ -323,7 +318,7 @@ function App() {
     try {
       await api.stopPlayback();
       setIsPlaying(false);
-      setCurrentFrame(0);
+      setCurrentStep(0);
       setPlayingSlot(null);
       setIsPlayingChain(false);
     } catch (error) {
@@ -407,8 +402,8 @@ function App() {
 
     // 全シーケンスを結合
     const combinedFrames: InputFrame[] = [];
-    const frameMap: number[] = []; // 各シーケンスの開始フレーム位置
-    let currentFramePosition = 0;
+    const stepMap: number[] = []; // 各シーケンスの開始ステップ位置
+    let currentStepPosition = 0;
 
     for (let i = 0; i < sequenceChain.length; i++) {
       const slotIndex = sequenceChain[i];
@@ -419,17 +414,16 @@ function App() {
         continue;
       }
 
-      frameMap.push(currentFramePosition);
+      stepMap.push(currentStepPosition);
       console.log(
-        `[playChain] シーケンス${i}: スロット${slotIndex + 1}, 開始フレーム: ${currentFramePosition}, フレーム数: ${slot.frames.length}`,
+        `[playChain] シーケンス${i}: スロット${slotIndex + 1}, 開始ステップ: ${currentStepPosition}, ステップ数: ${slot.frames.length}`,
       );
 
       // フレームを結合
       combinedFrames.push(...slot.frames);
 
-      // 総フレーム数を計算（durationの合計）
-      const totalDuration = slot.frames.reduce((sum, f) => sum + f.duration, 0);
-      currentFramePosition += totalDuration;
+      // ステップ数を加算
+      currentStepPosition += slot.frames.length;
     }
 
     if (combinedFrames.length === 0) {
@@ -438,16 +432,16 @@ function App() {
     }
 
     console.log(
-      `[playChain] 結合完了: 総フレーム数=${currentFramePosition}, シーケンス数=${frameMap.length}`,
+      `[playChain] 結合完了: 総ステップ数=${currentStepPosition}, シーケンス数=${stepMap.length}`,
     );
-    console.log("[playChain] フレームマップ:", frameMap);
+    console.log("[playChain] ステップマップ:", stepMap);
 
     try {
       // 結合したシーケンスをメモリに読み込む
       await api.loadInputSequence(combinedFrames);
-      setTotalFrames(currentFramePosition);
-      setCurrentFrame(0);
-      setChainFrameMap(frameMap);
+      setTotalSteps(currentStepPosition);
+      setCurrentStep(0);
+      setChainStepMap(stepMap);
       setCurrentChainIndex(0);
 
       await api.setInvertHorizontal(invertHorizontal);
@@ -465,12 +459,12 @@ function App() {
 
   // チェーン再生中の現在のシーケンスインデックスを更新
   useEffect(() => {
-    if (!isPlayingChain || chainFrameMap.length === 0) return;
+    if (!isPlayingChain || chainStepMap.length === 0) return;
 
-    // 現在のフレーム位置から、どのシーケンスを再生中か判定
+    // 現在のステップ位置から、どのシーケンスを再生中か判定
     let newChainIndex = 0;
-    for (let i = chainFrameMap.length - 1; i >= 0; i--) {
-      if (currentFrame >= chainFrameMap[i]) {
+    for (let i = chainStepMap.length - 1; i >= 0; i--) {
+      if (currentStep >= chainStepMap[i]) {
         newChainIndex = i;
         break;
       }
@@ -482,7 +476,7 @@ function App() {
       );
       setCurrentChainIndex(newChainIndex);
     }
-  }, [currentFrame, isPlayingChain, chainFrameMap, currentChainIndex]);
+  }, [currentStep, isPlayingChain, chainStepMap, currentChainIndex]);
 
   // チェーン再生終了時の処理
   useEffect(() => {
@@ -490,7 +484,7 @@ function App() {
       console.log("[Chain End] チェーン再生終了");
       setIsPlayingChain(false);
       setCurrentChainIndex(0);
-      setChainFrameMap([]);
+      setChainStepMap([]);
     }
   }, [isPlaying, isPlayingChain]);
 
@@ -647,8 +641,8 @@ function App() {
           <div className="sequence-header">
             <h3>シーケンス再生</h3>
             <span className="frame-counter">
-              {isPlaying ? `${currentFrame} / ${totalFrames}` : "0 / 0"}{" "}
-              フレーム
+              {isPlaying ? `${currentStep} / ${totalSteps}` : "0 / 0"}{" "}
+              ステップ
             </span>
           </div>
           <div className="sequence-controls">
@@ -660,8 +654,8 @@ function App() {
                 const isThisSlotPlaying = isPlaying && playingSlot === i;
                 const isOtherSlotPlaying = isPlaying && playingSlot !== i;
                 const progress =
-                  isThisSlotPlaying && totalFrames > 0
-                    ? (currentFrame / totalFrames) * 100
+                  isThisSlotPlaying && totalSteps > 0
+                    ? (currentStep / totalSteps) * 100
                     : 0;
 
                 return (
@@ -770,7 +764,7 @@ function App() {
                 style={{ fontSize: "11px", color: "#888", marginBottom: "4px" }}
               >
                 Debug: 再生中シーケンス={currentChainIndex + 1} / 総数=
-                {sequenceChain.length} (フレーム: {currentFrame} / {totalFrames}
+                {sequenceChain.length} (ステップ: {currentStep} / {totalSteps}
                 )
               </div>
             )}
@@ -977,6 +971,21 @@ function App() {
             setEditingSlotPath(null);
             setEditingSlotIndex(null);
             setCurrentPlayingRow(-1);
+          }}
+          onReload={(frames) => {
+            // 編集中の内容をスロットに反映
+            if (editingSlotIndex !== null) {
+              const newSlots = [...sequenceSlots];
+              newSlots[editingSlotIndex] = {
+                path: editingSlotPath,
+                frames: frames,
+                compatible: true,
+              };
+              setSequenceSlots(newSlots);
+              console.log(
+                `✓ スロット${editingSlotIndex + 1}に編集内容を反映しました (${frames.length}フレーム)`,
+              );
+            }
           }}
           currentPlayingRow={currentPlayingRow}
           sequenceButtons={sequenceButtons}

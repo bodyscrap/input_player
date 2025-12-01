@@ -10,13 +10,15 @@ interface InputFrame {
 interface SequenceEditorProps {
   csvPath: string;
   onClose: (savedPath?: string) => void; // 保存されたパスを返す
-  currentPlayingRow: number | null; // 現在再生中の行（外部から制御）
+  onReload?: (frames: InputFrame[]) => void; // 編集内容をスロットに反映するコールバック
+  currentPlayingRow: number | null; // 現在再生中の行(外部から制御)
   sequenceButtons: string[]; // シーケンスで使用可能なボタンのリスト
 }
 
 function SequenceEditor({
   csvPath,
   onClose,
+  onReload,
   currentPlayingRow,
   sequenceButtons,
 }: SequenceEditorProps) {
@@ -309,57 +311,34 @@ function SequenceEditor({
       try {
         const { api } = await import("./api");
         console.log("[SequenceEditor] 再生開始 - フレーム数:", frames.length);
-        console.log("[SequenceEditor] 最初のフレーム:", frames[0]);
-        console.log(
-          "[SequenceEditor] 最後のフレーム:",
-          frames[frames.length - 1],
-        );
 
-        // 編集内容を一時的に保存してから再生
-        console.log("[SequenceEditor] 保存中...");
-        await api.saveFramesForEdit(csvPath, frames);
-        console.log("[SequenceEditor] 保存完了");
-
-        console.log("[SequenceEditor] 読み込み中...");
-        const frameCount = await api.loadInputFile(csvPath);
+        // 編集中のフレームデータをメモリに直接ロード
+        console.log("[SequenceEditor] メモリに読み込み中...");
+        const frameCount = await api.loadInputSequence(frames);
         console.log("[SequenceEditor] 読み込み完了 - フレーム数:", frameCount);
 
-        if (frameCount !== frames.length) {
-          console.warn(
-            "[SequenceEditor] ⚠️ フレーム数不一致! 保存:",
-            frames.length,
-            "読み込み:",
-            frameCount,
-          );
-        }
-
-        console.log("[SequenceEditor] 再生開始API呼び出し前");
+        console.log("[SequenceEditor] 再生開始API呼び出し");
         await api.startPlayback();
-        console.log("[SequenceEditor] 再生開始API呼び出し後");
 
-        console.log("[SequenceEditor] setLocalIsPlaying(true) 呼び出し");
         setLocalIsPlaying(true);
-        console.log("[SequenceEditor] setInternalPlayingRow(0) 呼び出し");
         setInternalPlayingRow(0);
-        console.log("[SequenceEditor] 状態更新完了");
-        setMessage(`再生を開始しました (${frameCount}フレーム)`);
+        setMessage(`再生を開始しました (${frameCount}ステップ)`);
       } catch (error) {
         console.error("[SequenceEditor] ❌ 再生エラー:", error);
-        console.error(
-          "[SequenceEditor] エラー詳細:",
-          JSON.stringify(error, null, 2),
-        );
         setMessage(`再生エラー: ${error}`);
-        alert(`再生エラーが発生しました: ${error}`);
       }
     }
   };
 
   const handleReload = async () => {
     try {
-      const { api } = await import("./api");
-      await api.reloadCurrentSequence();
-      setMessage("✓ スロットに反映しました");
+      // 編集内容を親コンポーネントに渡してスロットを更新
+      if (onReload) {
+        onReload(frames);
+        setMessage("✓ 編集内容をスロットに反映しました");
+      } else {
+        setMessage("✗ スロット反映機能が利用できません");
+      }
     } catch (error) {
       console.error("反映エラー:", error);
       setMessage(`反映エラー: ${error}`);
@@ -468,13 +447,9 @@ function SequenceEditor({
             </button>
             <button
               onClick={handleReload}
-              disabled={hasChanges || isPlaying}
+              disabled={isPlaying}
               className="btn-reload"
-              title={
-                hasChanges
-                  ? "保存後に反映できます"
-                  : "保存済みの内容をスロットに反映"
-              }
+              title="編集中の内容をスロットに反映"
             >
               🔄 スロットに反映
             </button>

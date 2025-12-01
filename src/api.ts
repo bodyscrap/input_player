@@ -45,7 +45,7 @@ export const api = {
   },
 
   async setLoopPlayback(loop: boolean): Promise<void> {
-    return await invoke("set_loop_playback", { loop });
+    return await invoke("set_loop_playback", { loopEnabled: loop });
   },
 
   async isPlaying(): Promise<boolean> {

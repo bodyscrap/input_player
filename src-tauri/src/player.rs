@@ -1,55 +1,95 @@
 use crate::controller::Controller;
-use crate::types::InputFrame;
+use crate::types::{InputFrame, SequenceState, SequenceEvent};
 use anyhow::Result;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 pub struct Player {
+    // シーケンスデータ
     pub frames: Vec<InputFrame>,
-    current_frame: usize,
-    current_frame_count: u32,
-    is_playing: bool,
+    
+    // 状態管理
+    state: SequenceState,
+    current_step: usize,  // 現在のステップ（行番号）
+    
+    // タイミング管理
+    sequence_start_time: Option<Instant>,  // シーケンス開始時刻
+    next_step_time: Duration,  // 次のステップに進む累積時間
+    
+    // 設定
     invert_horizontal: bool,
     button_mapping: HashMap<String, String>, // CSVボタン名 -> Xboxボタン名
     loop_playback: bool,
-    current_path: Option<String>, // 現在ロードされているCSVのパス
+    current_path: Option<String>,
+    fps: u32,  // FPS設定
 }
 
 impl Player {
     pub fn new() -> Self {
         Self {
             frames: Vec::new(),
-            current_frame: 0,
-            current_frame_count: 0,
-            is_playing: false,
+            state: SequenceState::NoSequence,
+            current_step: 0,
+            sequence_start_time: None,
+            next_step_time: Duration::from_secs(0),
             invert_horizontal: false,
             button_mapping: HashMap::new(),
             loop_playback: false,
             current_path: None,
+            fps: 60,
         }
     }
 
+    // シーケンスをロード（停止状態に遷移）
     pub fn load_frames(&mut self, frames: Vec<InputFrame>) {
         self.frames = frames;
-        self.current_frame = 0;
-        self.current_frame_count = 0;
+        self.state = if self.frames.is_empty() {
+            SequenceState::NoSequence
+        } else {
+            SequenceState::Stopped
+        };
+        self.current_step = 0;
+        self.sequence_start_time = None;
+        self.next_step_time = Duration::from_secs(0);
     }
 
+    // 再生開始
     pub fn start(&mut self) {
-        self.is_playing = true;
-        self.current_frame = 0;
-        self.current_frame_count = 0;
+        if self.state == SequenceState::Stopped || self.state == SequenceState::NoSequence {
+            if !self.frames.is_empty() {
+                // 1. シーケンスロード完了 (既に完了)
+                // 2. コントローラー状態を入力無しに (次のupdateで送信)
+                // 3. 再生開始時刻を取得
+                self.sequence_start_time = Some(Instant::now());
+                // 4. 再生中に遷移
+                self.state = SequenceState::Playing;
+                // 5. コントローラの状態を最初のステップに設定 (次のupdateで送信)
+                self.current_step = 0;
+                // next_step_time は開始時刻からの絶対経過時間 (0ms = すぐに送信)
+                self.next_step_time = Duration::from_secs(0);
+                
+                println!("[Player] 再生開始: {} steps", self.frames.len());
+            }
+        }
     }
 
+    // 停止
     pub fn stop(&mut self) {
-        self.is_playing = false;
+        if self.state == SequenceState::Playing {
+            self.state = SequenceState::Stopped;
+            self.current_step = 0;
+            self.sequence_start_time = None;
+            self.next_step_time = Duration::from_secs(0);
+            println!("[Player] 停止");
+        }
     }
 
     pub fn pause(&mut self) {
-        self.is_playing = false;
+        self.stop();
     }
 
     pub fn resume(&mut self) {
-        self.is_playing = true;
+        self.start();
     }
 
     pub fn set_invert_horizontal(&mut self, invert: bool) {
@@ -64,97 +104,129 @@ impl Player {
         self.loop_playback = loop_enabled;
     }
 
-    pub fn is_playing(&self) -> bool {
-        self.is_playing
+    pub fn set_fps(&mut self, fps: u32) {
+        self.fps = fps;
     }
 
-    pub fn update(&mut self, controller: &mut Controller) -> Result<bool> {
-        if !self.is_playing || self.frames.is_empty() {
-            return Ok(false);
+    pub fn is_playing(&self) -> bool {
+        self.state == SequenceState::Playing
+    }
+
+    pub fn get_state(&self) -> SequenceState {
+        self.state
+    }
+
+    pub fn get_event(&self) -> SequenceEvent {
+        SequenceEvent {
+            state: self.state,
+            current_step: self.current_step,
+            total_steps: self.frames.len(),
+        }
+    }
+
+    // メインループから呼ばれる更新関数
+    // 戻り値: (コントローラーに送信したか, 状態が変化したか)
+    pub fn update(&mut self, controller: &mut Controller) -> Result<(bool, bool)> {
+        if self.state != SequenceState::Playing || self.frames.is_empty() {
+            return Ok((false, false));
         }
 
-        // 現在のフレームが範囲外の場合、ループまたは停止
-        if self.current_frame >= self.frames.len() {
-            println!(
-                "[Player::update] current_frame={} >= frames.len()={}",
-                self.current_frame,
-                self.frames.len()
-            );
-            println!("[Player::update] loop_playback={}", self.loop_playback);
-            if self.loop_playback {
-                // ループ再生の場合は最初から再生
-                println!("[Player] ループ再生: 先頭に戻ります");
-                self.current_frame = 0;
-                self.current_frame_count = 0;
-            } else {
-                println!("[Player] ループなし: 再生停止");
-                self.is_playing = false;
-                return Ok(false);
-            }
-        }
+        let start_time = match self.sequence_start_time {
+            Some(t) => t,
+            None => return Ok((false, false)),
+        };
 
-        let frame = &self.frames[self.current_frame];
+        // 8. 再生開始時間からの経過時間を取得
+        let elapsed = start_time.elapsed();
+        let mut state_changed = false;
 
-        // ボタンマッピングを適用（複数のCSVボタンが同じXboxボタンに割り当てられている場合はOR結合）
-        let mut mapped_frame = frame.clone();
-        let mut mapped_buttons = HashMap::new();
+        // 9. 開始時刻からの絶対経過時間で送信時刻を管理 (累積誤差を防ぐ)
+        // 10. 現在時刻から次の送信時刻までの差分sleep (メインループが60FPSで呼ぶのでここではチェックのみ)
+        if elapsed >= self.next_step_time {
+            // 5. コントローラの状態を現在のステップの入力状態に更新
+            if self.current_step < self.frames.len() {
+                let frame = &self.frames[self.current_step];
+                
+                // ボタンマッピングを適用
+                let mut mapped_frame = frame.clone();
+                let mut mapped_buttons = HashMap::new();
 
-        for (csv_button, value) in &frame.buttons {
-            if let Some(xbox_button) = self.button_mapping.get(csv_button) {
-                // 既存の値とOR結合（どちらかが1なら1）
-                let current_value = mapped_buttons.get(xbox_button).unwrap_or(&0);
-                let new_value = if *current_value == 1 || *value == 1 {
-                    1
-                } else {
-                    0
-                };
-                mapped_buttons.insert(xbox_button.clone(), new_value);
-            }
-        }
-        mapped_frame.buttons = mapped_buttons;
-
-        // コントローラーに入力を送信（エラーは無視して再生は継続）
-        let _ = controller.update_input(&mapped_frame, self.invert_horizontal);
-
-        self.current_frame_count += 1;
-
-        // durationフレーム経過したら次のフレームへ
-        if self.current_frame_count >= frame.duration {
-            self.current_frame += 1;
-            self.current_frame_count = 0;
-
-            // フレームを進めた後、範囲チェックとループ処理
-            if self.current_frame >= self.frames.len() {
-                if self.loop_playback {
-                    println!("[Player] ループ再生: フレーム進行後に先頭に戻ります");
-                    self.current_frame = 0;
-                    self.current_frame_count = 0;
+                for (csv_button, value) in &frame.buttons {
+                    if let Some(xbox_button) = self.button_mapping.get(csv_button) {
+                        let current_value = mapped_buttons.get(xbox_button).unwrap_or(&0);
+                        let new_value = if *current_value == 1 || *value == 1 { 1 } else { 0 };
+                        mapped_buttons.insert(xbox_button.clone(), new_value);
+                    }
                 }
-                // ループしない場合は次回のupdate()で停止する
+                mapped_frame.buttons = mapped_buttons;
+
+                // 6. コントローラの状態をドライバに送信
+                let _ = controller.update_input(&mapped_frame, self.invert_horizontal);
+
+                // 次のステップの送信時刻を開始時刻からの絶対時間で計算（現在のステップをインクリメントする前）
+                // 例: step0(3F) 送信後 → next_step_time = 0 + 3*1000/60 = 50ms
+                //     step1(5F) 送信後 → next_step_time = 0 + (3+5)*1000/60 = 133ms
+                //     step2(4F) 送信後 → next_step_time = 0 + (3+5+4)*1000/60 = 200ms
+                // これにより各ステップの誤差が累積しない
+                let mut cumulative_duration = 0u32;
+                for i in 0..=self.current_step {
+                    if i < self.frames.len() {
+                        cumulative_duration += self.frames[i].duration;
+                    }
+                }
+                let cumulative_ms = cumulative_duration as f64 * 1000.0 / self.fps as f64;
+                self.next_step_time = Duration::from_millis(cumulative_ms as u64);
+
+                // 7. コントローラの内部状態を次のステップの状態に更新
+                self.current_step += 1;
+
+                return Ok((true, state_changed));
+            } else if self.current_step >= self.frames.len() {
+                // 全てのステップを送信済みで、最後のステップのdurationも経過した
+                if self.loop_playback {
+                    // ループ再生: 先頭に戻る
+                    self.current_step = 0;
+                    // ループの先頭に戻るたびに開始時刻を更新（各ループサイクルが独立した正確なタイミングで再生）
+                    self.sequence_start_time = Some(Instant::now());
+                    self.next_step_time = Duration::from_secs(0);
+                    state_changed = true;
+                    println!("[Player] ループ再生: 先頭に戻ります");
+                    return Ok((false, state_changed));
+                } else {
+                    // 通常再生: 無入力を送信してから停止
+                    let neutral_frame = InputFrame {
+                        duration: 1,
+                        direction: 5, // 中立
+                        buttons: HashMap::new(), // 全ボタンOFF
+                        thumb_lx: 0,
+                        thumb_ly: 0,
+                        thumb_rx: 0,
+                        thumb_ry: 0,
+                        left_trigger: 0,
+                        right_trigger: 0,
+                    };
+                    let _ = controller.update_input(&neutral_frame, false);
+                    
+                    self.state = SequenceState::Stopped;
+                    self.current_step = 0;
+                    self.sequence_start_time = None;
+                    self.next_step_time = Duration::from_secs(0);
+                    state_changed = true;
+                    println!("[Player] 再生完了: 無入力送信後、停止状態に遷移");
+                    return Ok((true, state_changed)); // コントローラーに送信したのでtrue
+                }
             }
         }
 
-        Ok(true)
+        Ok((false, state_changed))
     }
 
     pub fn get_progress(&self) -> (usize, usize) {
-        // 現在までの経過フレーム数を計算
-        let mut elapsed_frames = 0u32;
-        for i in 0..self.current_frame {
-            if i < self.frames.len() {
-                elapsed_frames += self.frames[i].duration;
-            }
-        }
-        elapsed_frames += self.current_frame_count;
-
-        // 総フレーム数を計算（全durationの合計）
-        let total_frames: u32 = self.frames.iter().map(|f| f.duration).sum();
-
-        (elapsed_frames as usize, total_frames as usize)
+        (self.current_step, self.frames.len())
     }
 
-    pub fn get_current_frame(&self) -> usize {
-        self.current_frame
+    pub fn get_current_step(&self) -> usize {
+        self.current_step
     }
 
     pub fn set_current_path(&mut self, path: String) {

@@ -30,6 +30,22 @@ pub struct ButtonMapping {
     pub sequence_buttons: Option<Vec<String>>,
 }
 
+// シーケンスの状態
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SequenceState {
+    NoSequence,  // シーケンス無し
+    Stopped,     // 停止状態（シーケンスはロード済み）
+    Playing,     // 再生中
+}
+
+// シーケンスイベント（フロントエンドへの通知用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SequenceEvent {
+    pub state: SequenceState,
+    pub current_step: usize,  // 現在のステップ（行番号）
+    pub total_steps: usize,   // 総ステップ数
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ControllerType {
     Xbox,
