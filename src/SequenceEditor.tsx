@@ -10,7 +10,7 @@ interface InputFrame {
 interface SequenceEditorProps {
   csvPath: string;
   onClose: (savedPath?: string) => void; // 保存されたパスを返す
-  onReload?: (frames: InputFrame[]) => void; // 編集内容をスロットに反映するコールバック
+  onSave?: (frames: InputFrame[]) => void; // 保存時にスロットを更新するコールバック
   currentPlayingRow: number | null; // 現在再生中の行(外部から制御)
   sequenceButtons: string[]; // シーケンスで使用可能なボタンのリスト
 }
@@ -18,7 +18,7 @@ interface SequenceEditorProps {
 function SequenceEditor({
   csvPath,
   onClose,
-  onReload,
+  onSave,
   currentPlayingRow,
   sequenceButtons,
 }: SequenceEditorProps) {
@@ -55,6 +55,7 @@ function SequenceEditor({
   useEffect(() => {
     console.log("Loading frames for:", csvPath);
     loadFrames();
+    setHasChanges(false); // 開いた時はファイルから読み直す
   }, [csvPath]);
 
   // localIsPlayingの変更を監視
@@ -243,7 +244,13 @@ function SequenceEditor({
       await api.saveFramesForEdit(csvPath, frames);
       setHasChanges(false);
       setLastSavedPath(csvPath); // 保存パスを記録
-      setMessage("✓ 保存しました");
+      
+      // スロットの内容も更新
+      if (onSave) {
+        onSave(frames);
+      }
+      
+      setMessage("✓ 保存しました（スロットも更新）");
     } catch (error) {
       setMessage(`保存エラー: ${error}`);
     }
@@ -278,9 +285,14 @@ function SequenceEditor({
 
       const { api } = await import("./api");
       await api.saveFramesForEdit(savePath, frames);
+      
+      // スロットの内容も更新
+      if (onSave) {
+        onSave(frames);
+      }
       setHasChanges(false);
       setLastSavedPath(savePath); // 保存パスを記録
-      setMessage(`✓ 別名保存しました: ${savePath}`);
+      setMessage(`✓ 別名保存しました（スロットも更新）: ${savePath}`);
     } catch (error) {
       setMessage(`保存エラー: ${error}`);
     }
@@ -327,21 +339,6 @@ function SequenceEditor({
         console.error("[SequenceEditor] ❌ 再生エラー:", error);
         setMessage(`再生エラー: ${error}`);
       }
-    }
-  };
-
-  const handleReload = async () => {
-    try {
-      // 編集内容を親コンポーネントに渡してスロットを更新
-      if (onReload) {
-        onReload(frames);
-        setMessage("✓ 編集内容をスロットに反映しました");
-      } else {
-        setMessage("✗ スロット反映機能が利用できません");
-      }
-    } catch (error) {
-      console.error("反映エラー:", error);
-      setMessage(`反映エラー: ${error}`);
     }
   };
 
@@ -413,6 +410,13 @@ function SequenceEditor({
     9: "↗",
   };
 
+  // ファイル名を抽出
+  const fileName = csvPath
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.replace(/\.csv$/i, "") || "Unknown";
+
   return (
     <div
       className="sequence-editor-overlay"
@@ -426,6 +430,9 @@ function SequenceEditor({
       >
         <div className="editor-header">
           <h2>シーケンス編集</h2>
+          <div style={{ fontSize: "14px", color: "#aaa", marginBottom: "8px" }}>
+            {fileName}
+          </div>
           <div style={{ fontSize: "11px", color: "#888", marginBottom: "4px" }}>
             Debug: playing={localIsPlaying ? "true" : "false"}, row=
             {internalPlayingRow}, frames={frames.length}
@@ -444,14 +451,6 @@ function SequenceEditor({
               className="btn-save"
             >
               💾️ 別名保存
-            </button>
-            <button
-              onClick={handleReload}
-              disabled={isPlaying}
-              className="btn-reload"
-              title="編集中の内容をスロットに反映"
-            >
-              🔄 スロットに反映
             </button>
             <button
               onClick={() => onClose(lastSavedPath || undefined)}

@@ -7,13 +7,12 @@ import "./ButtonMappingEditor.css";
 interface ButtonMappingEditorProps {
   onClose: () => void;
   initialConnected: boolean;
-  isExpanded: boolean;
   activeTestButton: string | null;
   setActiveTestButton: (button: string | null) => void;
   onMappingSaved?: () => void; // マッピング保存時のコールバック
 }
 
-function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, setActiveTestButton, onMappingSaved }: ButtonMappingEditorProps) {
+function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setActiveTestButton, onMappingSaved }: ButtonMappingEditorProps) {
   const [mapping, setMapping] = useState<ButtonMapping>({
     xbox: {},
     dualshock4: {},
@@ -198,40 +197,47 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
   const csvToXbox = mapping.xbox;
   const csvButtons = Object.keys(csvToXbox);
 
-  if (!isExpanded) return null;
-
   return (
-    <div className="button-mapping-editor-inline">
-      <div className="editor-controls">
-        <button onClick={handleMappingFileSelect} className="btn-file">
-          📁 マッピング設定ファイルを開く
-        </button>
-        <button onClick={handleCsvFileSelect} className="btn-file">
-          📄 入力履歴CSVから作成
-        </button>
-        <button onClick={saveMappingToFile} className="btn-save">
-          💾 保存
-        </button>
-        <button onClick={addNewMapping} className="btn-add">
-          + 追加
-        </button>
-      </div>
-
-      {message && <div className="message-inline">{message}</div>}
-
-      {!isConnected && (
-        <div className="warning-message">
-          ⚠️ コントローラーが未接続です。ボタンテストを行うには接続してください。
+    <div className="button-mapping-editor-overlay" onClick={onClose}>
+      <div className="button-mapping-editor-window" onClick={(e) => e.stopPropagation()}>
+        <div className="editor-header">
+          <h2>ボタンマッピング設定</h2>
+          <button onClick={onClose} className="close-button">
+            ✕
+          </button>
         </div>
-      )}
 
-      {isConnected && (
-        <div className="info-message">
-          💡 CSVボタン名をクリックして動作を確認できます。
-        </div>
-      )}
+        <div className="editor-content">
+          <div className="editor-controls">
+            <button onClick={handleMappingFileSelect} className="btn-file">
+              📁 マッピング設定ファイルを開く
+            </button>
+            <button onClick={handleCsvFileSelect} className="btn-file">
+              📄 入力履歴CSVから作成
+            </button>
+            <button onClick={saveMappingToFile} className="btn-save">
+              💾 保存
+            </button>
+            <button onClick={addNewMapping} className="btn-add">
+              + 追加
+            </button>
+          </div>
 
-      <table className="mapping-table-inline">
+          {message && <div className="message-inline">{message}</div>}
+
+          {!isConnected && (
+            <div className="warning-message">
+              ⚠️ コントローラーが未接続です。ボタンテストを行うには接続してください。
+            </div>
+          )}
+
+          {isConnected && (
+            <div className="info-message">
+              💡 CSVボタン名をクリックして動作を確認できます。
+            </div>
+          )}
+
+          <table className="mapping-table-inline">
         <thead>
           <tr>
             <th>CSVボタン名</th>
@@ -301,6 +307,8 @@ function ButtonMappingEditor({ initialConnected, isExpanded, activeTestButton, s
           )}
         </tbody>
       </table>
+        </div>
+      </div>
     </div>
   );
 }

@@ -11,8 +11,7 @@ function App() {
   // Controller state
   const [isConnected, setIsConnected] = useState(false);
 
-  // FPS state
-  const [fps, setFpsState] = useState(60);
+
 
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -28,7 +27,10 @@ function App() {
 
   // Button mapping editor state
   const [showMappingEditor, setShowMappingEditor] = useState(false);
-  const [useMappingLabels, setUseMappingLabels] = useState(false);
+  const [useMappingLabels, setUseMappingLabels] = useState(() => {
+    const saved = localStorage.getItem("useMappingLabels");
+    return saved === "true";
+  });
   const [buttonMapping, setButtonMapping] = useState<Record<string, string>>(
     {},
   );
@@ -56,23 +58,20 @@ function App() {
   const [editingSlotIndex, setEditingSlotIndex] = useState<number | null>(null);
   const [currentPlayingRow, setCurrentPlayingRow] = useState<number>(-1);
 
+  // Slot selection dialog state
+  const [showSlotSelector, setShowSlotSelector] = useState(false);
+  const [exportedPath, setExportedPath] = useState<string | null>(null);
+  const [exportedFrames, setExportedFrames] = useState<InputFrame[]>([]);
+
   // Refs to hold the latest values for use in interval
   const povDirectionRef = useRef(povDirection);
   const activeButtonRef = useRef(activeButton);
   const activeTestButtonRef = useRef(activeTestButton);
 
-  // Load FPS on mount
+  // Save useMappingLabels to localStorage
   useEffect(() => {
-    const loadFps = async () => {
-      try {
-        const currentFps = await api.getFps();
-        setFpsState(currentFps);
-      } catch (error) {
-        console.error("FPS読み込みエラー:", error);
-      }
-    };
-    loadFps();
-  }, []);
+    localStorage.setItem("useMappingLabels", String(useMappingLabels));
+  }, [useMappingLabels]);
 
   // バックエンドからの再生状態変化イベントをリッスン
   useEffect(() => {
@@ -187,14 +186,7 @@ function App() {
     }
   };
 
-  const handleFpsChange = async (newFps: number) => {
-    try {
-      await api.setFps(newFps);
-      setFpsState(newFps);
-    } catch (error) {
-      console.error("FPS設定エラー:", error);
-    }
-  };
+
 
   const handleInvertToggle = async (checked: boolean) => {
     setInvertHorizontal(checked);
@@ -390,19 +382,15 @@ function App() {
   };
 
   // シーケンスチェーン: 全シーケンスを結合して再生
-  const playChain = async () => {
-    if (sequenceChain.length === 0) return;
+  // チェーンを結合したシーケンスを生成（共通処理）
+  const buildCombinedSequence = (): {
+    frames: InputFrame[];
+    stepMap: number[];
+  } | null => {
+    if (sequenceChain.length === 0) return null;
 
-    console.log("[playChain] ========== チェーン再生開始 ==========");
-    console.log("[playChain] sequenceChain:", JSON.stringify(sequenceChain));
-    console.log(
-      "[playChain] スロット番号順:",
-      sequenceChain.map((idx) => idx + 1),
-    );
-
-    // 全シーケンスを結合
     const combinedFrames: InputFrame[] = [];
-    const stepMap: number[] = []; // 各シーケンスの開始ステップ位置
+    const stepMap: number[] = [];
     let currentStepPosition = 0;
 
     for (let i = 0; i < sequenceChain.length; i++) {
@@ -415,33 +403,36 @@ function App() {
       }
 
       stepMap.push(currentStepPosition);
-      console.log(
-        `[playChain] シーケンス${i}: スロット${slotIndex + 1}, 開始ステップ: ${currentStepPosition}, ステップ数: ${slot.frames.length}`,
-      );
-
-      // フレームを結合
       combinedFrames.push(...slot.frames);
-
-      // ステップ数を加算
       currentStepPosition += slot.frames.length;
     }
 
     if (combinedFrames.length === 0) {
+      return null;
+    }
+
+    return { frames: combinedFrames, stepMap };
+  };
+
+  const playChain = async () => {
+    const combined = buildCombinedSequence();
+    if (!combined) {
       console.log("[playChain] 再生可能なシーケンスがありません");
       return;
     }
 
+    console.log("[playChain] ========== チェーン再生開始 ==========");
     console.log(
-      `[playChain] 結合完了: 総ステップ数=${currentStepPosition}, シーケンス数=${stepMap.length}`,
+      `[playChain] 結合完了: 総ステップ数=${combined.frames.length}, シーケンス数=${combined.stepMap.length}`,
     );
-    console.log("[playChain] ステップマップ:", stepMap);
+    console.log("[playChain] ステップマップ:", combined.stepMap);
 
     try {
       // 結合したシーケンスをメモリに読み込む
-      await api.loadInputSequence(combinedFrames);
-      setTotalSteps(currentStepPosition);
+      await api.loadInputSequence(combined.frames);
+      setTotalSteps(combined.frames.length);
       setCurrentStep(0);
-      setChainStepMap(stepMap);
+      setChainStepMap(combined.stepMap);
       setCurrentChainIndex(0);
 
       await api.setInvertHorizontal(invertHorizontal);
@@ -454,6 +445,47 @@ function App() {
       console.log("[playChain] ========== チェーン再生開始完了 ==========");
     } catch (error) {
       console.error("チェーン再生エラー:", error);
+    }
+  };
+
+  // チェーンをCSVにエクスポート
+  const exportChain = async () => {
+    const combined = buildCombinedSequence();
+    if (!combined) {
+      console.error("エクスポート可能なシーケンスがありません");
+      return;
+    }
+
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { ask } = await import("@tauri-apps/plugin-dialog");
+
+      // ファイル保存ダイアログ
+      const savePath = await save({
+        defaultPath: "combined_sequence.csv",
+        filters: [
+          {
+            name: "CSV Files",
+            extensions: ["csv"],
+          },
+        ],
+      });
+
+      if (!savePath) {
+        console.log("エクスポートがキャンセルされました");
+        return;
+      }
+
+      // CSV保存
+      await api.saveFramesForEdit(savePath, combined.frames);
+      console.log(`✓ チェーンをエクスポートしました: ${savePath} (${combined.frames.length}ステップ)`);
+
+      // モーダルダイアログを表示してスロット選択
+      setExportedPath(savePath);
+      setExportedFrames(combined.frames);
+      setShowSlotSelector(true);
+    } catch (error) {
+      console.error("エクスポートエラー:", error);
     }
   };
 
@@ -495,32 +527,19 @@ function App() {
 
   return (
     <main className="container">
-      <h1>Input Player</h1>
+      <h1>入力便利 じんむくん</h1>
 
       {/* Manual Input */}
       <section className="section">
         <div className="section-header-with-controls">
           <h2>手動入力</h2>
           <div className="manual-input-controls">
-            <div className="fps-control">
-              <label htmlFor="fps-select">FPS:</label>
-              <select
-                id="fps-select"
-                value={fps}
-                onChange={(e) => handleFpsChange(Number(e.target.value))}
-                className="fps-select"
-              >
-                <option value={30}>30</option>
-                <option value={60}>60</option>
-                <option value={120}>120</option>
-                <option value={144}>144</option>
-              </select>
-            </div>
+
             <button
-              onClick={() => setShowMappingEditor(!showMappingEditor)}
-              className={`btn-small ${showMappingEditor ? "active" : ""}`}
+              onClick={() => setShowMappingEditor(true)}
+              className="btn-small"
             >
-              {showMappingEditor ? "▼" : "▶"} マッピング設定
+              ⚙️ マッピング設定
             </button>
             <button
               onClick={isConnected ? handleDisconnect : handleConnect}
@@ -779,6 +798,14 @@ function App() {
                 {isPlayingChain ? "■ 停止" : "▶ 再生"}
               </button>
               <button
+                onClick={exportChain}
+                className="btn-chain-export"
+                disabled={sequenceChain.length === 0 || isPlayingChain}
+                title="チェーンを結合してCSVにエクスポート"
+              >
+                💾 エクスポート
+              </button>
+              <button
                 onClick={clearChain}
                 className="btn-chain-clear"
                 disabled={sequenceChain.length === 0 || isPlayingChain}
@@ -915,7 +942,7 @@ function App() {
         </div>
       </section>
 
-      {/* Button Mapping Editor - 展開式 */}
+      {/* Button Mapping Editor - モーダルウィンドウ */}
       {showMappingEditor && (
         <ButtonMappingEditor
           onClose={() => {
@@ -923,7 +950,6 @@ function App() {
             loadMapping();
           }}
           initialConnected={isConnected}
-          isExpanded={true}
           activeTestButton={activeTestButton}
           setActiveTestButton={setActiveTestButton}
           onMappingSaved={loadMapping}
@@ -972,8 +998,8 @@ function App() {
             setEditingSlotIndex(null);
             setCurrentPlayingRow(-1);
           }}
-          onReload={(frames) => {
-            // 編集中の内容をスロットに反映
+          onSave={(frames) => {
+            // 保存時にスロットの内容を更新
             if (editingSlotIndex !== null) {
               const newSlots = [...sequenceSlots];
               newSlots[editingSlotIndex] = {
@@ -983,13 +1009,155 @@ function App() {
               };
               setSequenceSlots(newSlots);
               console.log(
-                `✓ スロット${editingSlotIndex + 1}に編集内容を反映しました (${frames.length}フレーム)`,
+                `✓ スロット${editingSlotIndex + 1}を更新しました (${frames.length}フレーム)`,
               );
             }
           }}
           currentPlayingRow={currentPlayingRow}
           sequenceButtons={sequenceButtons}
         />
+      )}
+
+      {/* Slot Selection Dialog */}
+      {showSlotSelector && exportedPath && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+          onClick={() => {
+            setShowSlotSelector(false);
+            setExportedPath(null);
+            setExportedFrames([]);
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: "#2a2a2a",
+              padding: "20px",
+              borderRadius: "8px",
+              maxWidth: "500px",
+              width: "90%",
+              maxHeight: "80vh",
+              overflow: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ marginTop: 0 }}>エクスポート完了</h3>
+            <p style={{ marginBottom: "20px" }}>
+              ロード先スロットを選択してください
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {/* ロードしないボタン */}
+              <button
+                onClick={() => {
+                  console.log("スロットにロードしませんでした");
+                  setShowSlotSelector(false);
+                  setExportedPath(null);
+                  setExportedFrames([]);
+                }}
+                style={{
+                  padding: "10px",
+                  fontSize: "14px",
+                  backgroundColor: "#444",
+                  border: "1px solid #666",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                }}
+              >
+                ロードしない
+              </button>
+
+              {/* 各スロットボタン */}
+              {Array.from({ length: 12 }, (_, i) => {
+                const slot = sequenceSlots[i];
+                const isEmpty = !slot;
+                const fileName = slot
+                  ? slot.path
+                      .replace(/\\/g, "/")
+                      .split("/")
+                      .pop()
+                      ?.replace(/\.csv$/i, "") || "Unknown"
+                  : "";
+
+                // デフォルトスロット判定
+                const isDefault =
+                  isEmpty &&
+                  !sequenceSlots.slice(0, i).some((s) => !s);
+
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      const newSlots = [...sequenceSlots];
+                      newSlots[i] = {
+                        path: exportedPath,
+                        frames: exportedFrames,
+                        compatible: true,
+                      };
+                      setSequenceSlots(newSlots);
+                      console.log(`✓ スロット${i + 1}にロードしました`);
+                      setShowSlotSelector(false);
+                      setExportedPath(null);
+                      setExportedFrames([]);
+                    }}
+                    style={{
+                      padding: "10px",
+                      fontSize: "14px",
+                      backgroundColor: isDefault ? "#0066cc" : isEmpty ? "#333" : "#554400",
+                      border: `1px solid ${isDefault ? "#0088ff" : isEmpty ? "#555" : "#886600"}`,
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <strong>スロット{i + 1}</strong>
+                    {isEmpty ? (
+                      <span style={{ color: "#888" }}> (空き)</span>
+                    ) : (
+                      <span style={{ color: "#ffaa00" }}>
+                        {" "}
+                        ({fileName}) ※上書き
+                      </span>
+                    )}
+                    {isDefault && (
+                      <span style={{ color: "#88ccff" }}> [推奨]</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => {
+                setShowSlotSelector(false);
+                setExportedPath(null);
+                setExportedFrames([]);
+              }}
+              style={{
+                marginTop: "20px",
+                padding: "10px 20px",
+                fontSize: "14px",
+                backgroundColor: "#555",
+                border: "1px solid #777",
+                borderRadius: "4px",
+                cursor: "pointer",
+                width: "100%",
+              }}
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
       )}
     </main>
   );

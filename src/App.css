@@ -144,35 +144,7 @@ h3 {
   flex-wrap: wrap;
 }
 
-.fps-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
-.fps-control label {
-  font-size: 0.9em;
-  color: #88ff88;
-}
-
-.fps-select {
-  padding: 0.4em 0.6em;
-  border-radius: 4px;
-  border: 1px solid #646cff;
-  background-color: #2a2a2a;
-  color: rgba(255, 255, 255, 0.87);
-  font-size: 0.9em;
-  cursor: pointer;
-}
-
-.fps-select:hover {
-  border-color: #747bff;
-}
-
-.fps-select:focus {
-  outline: none;
-  border-color: #00ff00;
-}
 
 /* Input Controls Row (POV + Buttons) */
 .input-controls-row {
@@ -335,20 +307,20 @@ h3 {
 /* Sequence Buttons */
 .sequence-buttons {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 4px;
 }
 
 .btn-sequence {
-  padding: 6px 12px;
-  font-size: 14px;
+  padding: 8px 4px;
+  font-size: 12px;
   font-weight: 600;
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   background: #2a2a2a;
   color: rgba(255, 255, 255, 0.87);
   border-radius: 4px;
   cursor: pointer;
-  min-width: 36px;
+  min-width: 30px;
   position: relative;
   overflow: hidden;
   transition: all 0.2s ease;
@@ -639,6 +611,7 @@ progress {
 }
 
 .btn-chain-play,
+.btn-chain-export,
 .btn-chain-clear {
   padding: 6px 12px;
   font-size: 13px;
@@ -651,12 +624,14 @@ progress {
 }
 
 .btn-chain-play:hover:not(:disabled),
+.btn-chain-export:hover:not(:disabled),
 .btn-chain-clear:hover:not(:disabled) {
   background-color: #3a3a3a;
   border-color: #747bff;
 }
 
 .btn-chain-play:disabled,
+.btn-chain-export:disabled,
 .btn-chain-clear:disabled {
   opacity: 0.5;
   cursor: not-allowed;
