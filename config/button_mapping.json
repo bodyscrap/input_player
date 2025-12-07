@@ -1,19 +1,54 @@
 {
-  "xbox": {
-    "btn_w": "button1",
-    "RESET": "button12",
-    "btn_b": "button6",
-    "MENU": "button9",
-    "btn_start": "button10",
-    "btn_a1": "button3",
-    "btn_a2": "button4"
-  },
-  "dualshock4": {},
-  "sequenceButtons": [
-    "btn_a1",
-    "btn_a2",
-    "btn_b",
-    "btn_start",
-    "btn_w"
+  "controller_type": "Xbox",
+  "mapping": [
+    {
+      "user_button": "A1",
+      "controller_button": [
+        "button3"
+      ],
+      "use_in_sequence": true
+    },
+    {
+      "user_button": "A2",
+      "controller_button": [
+        "button4"
+      ],
+      "use_in_sequence": true
+    },
+    {
+      "user_button": "B",
+      "controller_button": [
+        "button6"
+      ],
+      "use_in_sequence": true
+    },
+    {
+      "user_button": "W",
+      "controller_button": [
+        "button1"
+      ],
+      "use_in_sequence": true
+    },
+    {
+      "user_button": "Start",
+      "controller_button": [
+        "button10"
+      ],
+      "use_in_sequence": true
+    },
+    {
+      "user_button": "MENU",
+      "controller_button": [
+        "button9"
+      ],
+      "use_in_sequence": false
+    },
+    {
+      "user_button": "RESET",
+      "controller_button": [
+        "button12"
+      ],
+      "use_in_sequence": false
+    }
   ]
 }

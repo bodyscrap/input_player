@@ -23,11 +23,16 @@ pub struct InputFrame {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserButton {
+    pub user_button: String,
+    pub controller_button: Vec<String>,
+    pub use_in_sequence: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ButtonMapping {
-    pub xbox: HashMap<String, String>,
-    pub dualshock4: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "sequenceButtons")]
-    pub sequence_buttons: Option<Vec<String>>,
+    pub controller_type: ControllerType,
+    pub mapping: Vec<UserButton>,
 }
 
 // シーケンスの状態

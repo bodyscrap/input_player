@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
-import type { ButtonMapping } from "./types";
+import type { ButtonMapping, UserButton, ControllerType } from "./types";
 import "./ButtonMappingEditor.css";
 
 interface ButtonMappingEditorProps {
@@ -9,17 +9,20 @@ interface ButtonMappingEditorProps {
   initialConnected: boolean;
   activeTestButton: string | null;
   setActiveTestButton: (button: string | null) => void;
-  onMappingSaved?: () => void; // マッピング保存時のコールバック
+  onMappingSaved?: (filePath: string) => void; // マッピング保存時のコールバック（保存したファイルパスを渡す）
+  currentMappingPath?: string; // 現在適用中のマッピングファイルパス
 }
 
-function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setActiveTestButton, onMappingSaved }: ButtonMappingEditorProps) {
+function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setActiveTestButton, onMappingSaved, currentMappingPath = "config/button_mapping.json" }: ButtonMappingEditorProps) {
   const [mapping, setMapping] = useState<ButtonMapping>({
-    xbox: {},
-    dualshock4: {},
-    sequenceButtons: [],
+    controller_type: "xbox",
+    mapping: [],
   });
   const [message, setMessage] = useState("");
   const [isConnected, setIsConnected] = useState(initialConnected);
+  const [currentFilePath, setCurrentFilePath] = useState<string>(currentMappingPath);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [originalMapping, setOriginalMapping] = useState<ButtonMapping | null>(null);
 
   // Xbox 360コントローラーのボタン一覧
   const xboxButtons = [
@@ -48,32 +51,80 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     setIsConnected(initialConnected);
   }, [initialConnected]);
 
-  // 前回のマッピングファイルを読み込む
+  // 現在適用中のマッピングファイルを読み込む
   useEffect(() => {
     loadMappingFromFile();
   }, []);
 
   const loadMappingFromFile = async () => {
     try {
-      const loaded = await api.loadButtonMapping("config/button_mapping.json");
+      const loaded = await api.loadButtonMapping(currentMappingPath);
       setMapping(loaded);
-      setMessage("前回のマッピングを読み込みました");
+      setOriginalMapping(loaded);
+      setCurrentFilePath(currentMappingPath);
+      setHasUnsavedChanges(false);
+      setMessage(`現在のマッピングを読み込みました: ${currentMappingPath}`);
     } catch (error) {
       setMessage("マッピング設定が見つかりません。ファイルを選択してください。");
-      setMapping({
-        xbox: {},
-        dualshock4: {},
-      });
+      const emptyMapping: ButtonMapping = {
+        controller_type: "xbox",
+        mapping: [],
+      };
+      setMapping(emptyMapping);
+      setOriginalMapping(emptyMapping);
+      setHasUnsavedChanges(false);
     }
   };
 
   const saveMappingToFile = async () => {
     try {
-      await api.saveButtonMapping("config/button_mapping.json", mapping);
-      setMessage("マッピングを保存しました");
-      // 親コンポーネントに保存を通知
+      await api.saveButtonMapping(currentFilePath, mapping);
+      setOriginalMapping(mapping);
+      setHasUnsavedChanges(false);
+      setMessage(`マッピングを保存しました: ${currentFilePath}`);
+      // 親コンポーネントに保存を通知（ファイルパスを渡す）
       if (onMappingSaved) {
-        onMappingSaved();
+        onMappingSaved(currentFilePath);
+      }
+    } catch (error) {
+      setMessage(`保存エラー: ${error}`);
+    }
+  };
+
+  const handleNewMapping = () => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm("保存されていない変更があります。破棄して新規作成しますか?");
+      if (!confirmed) return;
+    }
+    const newMapping: ButtonMapping = {
+      controller_type: "xbox",
+      mapping: [],
+    };
+    setMapping(newMapping);
+    setOriginalMapping(newMapping);
+    setCurrentFilePath("");
+    setHasUnsavedChanges(false);
+    setMessage("新規マッピングを作成しました。ボタンを追加してください。");
+  };
+
+  const handleSaveAs = async () => {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const file = await save({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      defaultPath: 'button_mapping.json',
+    });
+    
+    if (!file) return;
+
+    try {
+      await api.saveButtonMapping(file, mapping);
+      setCurrentFilePath(file);
+      setOriginalMapping(mapping);
+      setHasUnsavedChanges(false);
+      setMessage(`マッピングを保存しました: ${file}`);
+      // 親コンポーネントに保存を通知（ファイルパスを渡す）
+      if (onMappingSaved) {
+        onMappingSaved(file);
       }
     } catch (error) {
       setMessage(`保存エラー: ${error}`);
@@ -81,6 +132,11 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
   };
 
   const handleMappingFileSelect = async () => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm("保存されていない変更があります。破棄して新しいファイルを開きますか?");
+      if (!confirmed) return;
+    }
+
     const file = await open({
       multiple: false,
       directory: false,
@@ -92,9 +148,14 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     try {
       const loaded = await api.loadButtonMapping(file);
       setMapping(loaded);
-      setMessage("マッピングファイルを読み込みました");
-      // 自動保存
-      await api.saveButtonMapping("config/button_mapping.json", loaded);
+      setOriginalMapping(loaded);
+      setCurrentFilePath(file);
+      setHasUnsavedChanges(false);
+      setMessage(`マッピングファイルを読み込みました: ${file}`);
+      // 親コンポーネントにロードを通知（ファイルパスを渡す）
+      if (onMappingSaved) {
+        onMappingSaved(file);
+      }
     } catch (error) {
       setMessage(`読み込みエラー: ${error}`);
     }
@@ -112,76 +173,88 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     try {
       const buttons = await api.getCsvButtonNames(file);
       
-      // 自動マッピング作成
-      // 既存のsequenceButtonsを保持しつつ、CSVのボタンを追加
-      const currentSequenceButtons = mapping.sequenceButtons || [];
-      const allSequenceButtons = [...new Set([...currentSequenceButtons, ...buttons])];
+      // 既存のマッピングから、シーケンスで使っていないボタンの設定を保持
+      const currentButtons = mapping.mapping || [];
+      const preservedButtons: UserButton[] = currentButtons.filter(btn => !btn.use_in_sequence);
       
-      const newMapping: ButtonMapping = {
-        ...mapping,
-        sequenceButtons: allSequenceButtons,
-      };
-      
-      buttons.forEach((btnName, index) => {
-        // 既存のマッピングがなければ自動割り当て
-        if (!newMapping.xbox[btnName]) {
-          const xboxBtn = `button${Math.min(index + 1, 10)}`;
-          newMapping.xbox[btnName] = xboxBtn;
-        }
+      // CSVから新しいボタンを作成
+      const newButtons: UserButton[] = buttons.map((btnName, index) => {
+        const existing = currentButtons.find(b => b.user_button === btnName);
+        return {
+          user_button: btnName,
+          controller_button: existing?.controller_button || [`button${Math.min(index + 1, 12)}`],
+          use_in_sequence: true, // CSVから読み込まれたボタンはシーケンスで使用
+        };
       });
       
+      // 新しいマッピング作成
+      const allButtons = [...newButtons, ...preservedButtons];
+      const newMapping: ButtonMapping = {
+        controller_type: mapping.controller_type,
+        mapping: allButtons,
+      };
+      
       setMapping(newMapping);
-      setMessage(`CSVから${buttons.length}個のボタンを検出し、マッピングを作成しました`);
-      // 自動保存
-      await api.saveButtonMapping("config/button_mapping.json", newMapping);
+      setOriginalMapping(newMapping);
+      setCurrentFilePath(""); // ファイルパスをクリア
+      setHasUnsavedChanges(false);
+      setMessage(`CSVから${buttons.length}個のボタンを検出し、マッピングを作成しました。「名前を付けて保存」で保存してください。`);
     } catch (error) {
       setMessage(`CSV読み込みエラー: ${error}`);
     }
   };
 
-  const handleXboxMappingChange = (xboxButton: string, csvButton: string) => {
-    setMapping((prev) => ({
-      ...prev,
-      xbox: {
-        ...prev.xbox,
-        [csvButton]: xboxButton,
-      },
-    }));
-  };
-
-  const removeXboxMapping = (csvButton: string) => {
+  const handleXboxMappingChange = (xboxButton: string, userButton: string) => {
     setMapping((prev) => {
-      const newXbox = { ...prev.xbox };
-      delete newXbox[csvButton];
-      const newSequenceButtons = (prev.sequenceButtons || []).filter(btn => btn !== csvButton);
+      const newMapping = prev.mapping.map(btn =>
+        btn.user_button === userButton ? { ...btn, controller_button: [xboxButton] } : btn
+      );
       return {
         ...prev,
-        xbox: newXbox,
-        sequenceButtons: newSequenceButtons,
+        mapping: newMapping,
       };
     });
+    setHasUnsavedChanges(true);
   };
 
-  const toggleSequenceButton = (csvButton: string) => {
+  const removeXboxMapping = (userButton: string) => {
     setMapping((prev) => {
-      const currentSequenceButtons = prev.sequenceButtons || [];
-      const isCurrentlyInSequence = currentSequenceButtons.includes(csvButton);
-      
-      const newSequenceButtons = isCurrentlyInSequence
-        ? currentSequenceButtons.filter(btn => btn !== csvButton)
-        : [...currentSequenceButtons, csvButton];
-      
+      const newMapping = prev.mapping.filter(btn => btn.user_button !== userButton);
       return {
         ...prev,
-        sequenceButtons: newSequenceButtons,
+        mapping: newMapping,
       };
     });
+    setHasUnsavedChanges(true);
+  };
+
+  const toggleSequenceButton = (userButton: string) => {
+    setMapping((prev) => {
+      const newMapping = prev.mapping.map(btn =>
+        btn.user_button === userButton ? { ...btn, use_in_sequence: !btn.use_in_sequence } : btn
+      );
+      return {
+        ...prev,
+        mapping: newMapping,
+      };
+    });
+    setHasUnsavedChanges(true);
   };
 
   const addNewMapping = () => {
-    const csvButton = prompt("CSVのボタン名を入力してください（例: punch, kick, jump）");
-    if (csvButton && csvButton.trim()) {
-      handleXboxMappingChange("button1", csvButton.trim());
+    const userButton = prompt("ボタン名を入力してください（例: punch, kick, jump）");
+    if (userButton && userButton.trim()) {
+      const trimmed = userButton.trim();
+      const newButton: UserButton = {
+        user_button: trimmed,
+        controller_button: ["button1"],
+        use_in_sequence: false,
+      };
+      setMapping((prev) => ({
+        ...prev,
+        mapping: [...prev.mapping, newButton],
+      }));
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -194,34 +267,147 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     setActiveTestButton(null);
   };
 
-  const csvToXbox = mapping.xbox;
-  const csvButtons = Object.keys(csvToXbox);
+  const moveButtonUp = (userButton: string) => {
+    setMapping((prev) => {
+      const buttons = prev.mapping;
+      const index = buttons.findIndex(btn => btn.user_button === userButton);
+      if (index <= 0) return prev; // 既に一番上
+      
+      const newButtons = [...buttons];
+      [newButtons[index - 1], newButtons[index]] = [newButtons[index], newButtons[index - 1]];
+      
+      return {
+        ...prev,
+        mapping: newButtons,
+      };
+    });
+    setHasUnsavedChanges(true);
+  };
+
+  const moveButtonDown = (userButton: string) => {
+    setMapping((prev) => {
+      const buttons = prev.mapping;
+      const index = buttons.findIndex(btn => btn.user_button === userButton);
+      if (index < 0 || index >= buttons.length - 1) return prev; // 既に一番下
+      
+      const newButtons = [...buttons];
+      [newButtons[index], newButtons[index + 1]] = [newButtons[index + 1], newButtons[index]];
+      
+      return {
+        ...prev,
+        mapping: newButtons,
+      };
+    });
+    setHasUnsavedChanges(true);
+  };
+
+  const handleClose = () => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm("保存されていない変更があります。保存せずに閉じますか？");
+      if (!confirmed) return;
+    }
+    onClose();
+  };
+
+  // ドラッグ&ドロップ用の状態
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    console.log('Drag start:', index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', index.toString());
+    setDraggedIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    console.log('Drop at:', dropIndex, 'from:', draggedIndex);
+    
+    if (draggedIndex === null || draggedIndex === dropIndex) {
+      setDraggedIndex(null);
+      return;
+    }
+
+    setMapping((prev) => {
+      const buttons = prev.mapping;
+      const newButtons = [...buttons];
+      const [draggedItem] = newButtons.splice(draggedIndex, 1);
+      newButtons.splice(dropIndex, 0, draggedItem);
+      
+      console.log('New button order:', newButtons.map(b => b.user_button));
+      
+      return {
+        ...prev,
+        mapping: newButtons,
+      };
+    });
+    
+    setHasUnsavedChanges(true);
+    setDraggedIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    console.log('Drag end');
+    setDraggedIndex(null);
+  };
+
+  // マッピング配列を使用
+  const userButtons: UserButton[] = mapping.mapping;
 
   return (
-    <div className="button-mapping-editor-overlay" onClick={onClose}>
+    <div className="button-mapping-editor-overlay" onClick={handleClose}>
       <div className="button-mapping-editor-window" onClick={(e) => e.stopPropagation()}>
         <div className="editor-header">
-          <h2>ボタンマッピング設定</h2>
-          <button onClick={onClose} className="close-button">
+          <h2>ボタンマッピング設定{hasUnsavedChanges ? " *" : ""}</h2>
+          <button onClick={handleClose} className="close-button">
             ✕
           </button>
         </div>
 
         <div className="editor-content">
           <div className="editor-controls">
+            <button onClick={handleNewMapping} className="btn-file">
+              📝 新規作成
+            </button>
             <button onClick={handleMappingFileSelect} className="btn-file">
-              📁 マッピング設定ファイルを開く
+              📁 開く
             </button>
             <button onClick={handleCsvFileSelect} className="btn-file">
-              📄 入力履歴CSVから作成
+              📄 CSVから作成
             </button>
-            <button onClick={saveMappingToFile} className="btn-save">
-              💾 保存
+            <button 
+              onClick={saveMappingToFile} 
+              className="btn-save"
+              disabled={!currentFilePath}
+              title={!currentFilePath ? "先に「名前を付けて保存」でファイルを作成してください" : "現在のファイルに上書き保存"}
+            >
+              💾 上書き保存
+            </button>
+            <button onClick={handleSaveAs} className="btn-save">
+              💾 名前を付けて保存
             </button>
             <button onClick={addNewMapping} className="btn-add">
-              + 追加
+              + ボタン追加
             </button>
           </div>
+
+          {currentFilePath && (
+            <div className="current-file-info">
+              現在のファイル: {currentFilePath}
+            </div>
+          )}
 
           {message && <div className="message-inline">{message}</div>}
 
@@ -240,43 +426,60 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
           <table className="mapping-table-inline">
         <thead>
           <tr>
+            <th style={{ width: '30px' }}>🔀</th>
             <th>CSVボタン名</th>
             <th>→</th>
             <th>Xboxボタン</th>
             <th>シーケンス</th>
+            <th>順序</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody>
-          {csvButtons.length === 0 ? (
+          {userButtons.length === 0 ? (
             <tr>
-              <td colSpan={5} className="empty-message">
-                マッピングがありません。CSVファイルを選択するか、「+ 追加」をクリックしてください。
+              <td colSpan={7} className="empty-message">
+                マッピングがありません。CSVファイルを選択するか、「+ ボタン追加」をクリックしてください。
               </td>
             </tr>
           ) : (
-            csvButtons.map((csvButton) => {
-              const xboxButton = csvToXbox[csvButton];
-              const isActive = activeTestButton === xboxButton;
+            userButtons.map((userButton, index) => {
+              const isActive = activeTestButton === userButton.controller_button[0];
+              const isDragging = draggedIndex === index;
               
               return (
-                <tr key={csvButton}>
+                <tr 
+                  key={userButton.user_button}
+                  onDragOver={handleDragOver}
+                  onDragEnter={handleDragEnter}
+                  onDrop={(e) => handleDrop(e, index)}
+                  className={isDragging ? 'dragging' : ''}
+                >
+                  <td 
+                    className="drag-handle" 
+                    title="ドラッグして並び替え"
+                    draggable="true"
+                    onDragStart={(e) => handleDragStart(e, index)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    ⠿
+                  </td>
                   <td>
                     <button
                       className={`test-csv-button-inline ${isActive ? 'active' : ''}`}
-                      onMouseDown={() => handleTestButtonPress(csvButton, xboxButton)}
+                      onMouseDown={() => handleTestButtonPress(userButton.user_button, userButton.controller_button[0])}
                       onMouseUp={handleTestButtonRelease}
                       onMouseLeave={handleTestButtonRelease}
                       disabled={!isConnected}
                     >
-                      {csvButton}
+                      {userButton.user_button}
                     </button>
                   </td>
                   <td>→</td>
                   <td>
                     <select
-                      value={xboxButton}
-                      onChange={(e) => handleXboxMappingChange(e.target.value, csvButton)}
+                      value={userButton.controller_button[0]}
+                      onChange={(e) => handleXboxMappingChange(e.target.value, userButton.user_button)}
                       className="xbox-button-select-inline"
                     >
                       {xboxButtons.map((btn) => (
@@ -289,13 +492,31 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
                   <td className="checkbox-cell">
                     <input
                       type="checkbox"
-                      checked={mapping.sequenceButtons?.includes(csvButton) ?? false}
-                      onChange={() => toggleSequenceButton(csvButton)}
+                      checked={userButton.use_in_sequence}
+                      onChange={() => toggleSequenceButton(userButton.user_button)}
                     />
+                  </td>
+                  <td className="order-buttons">
+                    <button
+                      onClick={() => moveButtonUp(userButton.user_button)}
+                      disabled={index === 0}
+                      className="order-button"
+                      title="上へ"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => moveButtonDown(userButton.user_button)}
+                      disabled={index === userButtons.length - 1}
+                      className="order-button"
+                      title="下へ"
+                    >
+                      ▼
+                    </button>
                   </td>
                   <td>
                     <button
-                      onClick={() => removeXboxMapping(csvButton)}
+                      onClick={() => removeXboxMapping(userButton.user_button)}
                       className="remove-button-inline"
                     >
                       削除

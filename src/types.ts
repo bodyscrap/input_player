@@ -1,7 +1,13 @@
+// ユーザー定義ボタンの属性
+export interface UserButton {
+  user_button: string; // ユーザー定義ボタン名（CSVのカラム名）
+  controller_button: string[]; // 割り当て対象のコントローラ側ボタン名（配列で同時押し対応）
+  use_in_sequence: boolean; // シーケンスで使用するか否か
+}
+
 export interface ButtonMapping {
-  xbox: Record<string, string>;
-  dualshock4: Record<string, string>;
-  sequenceButtons?: string[]; // シーケンスで使用するボタンのリスト
+  controller_type: ControllerType; // コントローラータイプ
+  mapping: UserButton[]; // ボタンマッピング配列（この順番で画面表示される）
 }
 
 export interface InputFrame {

@@ -20,6 +20,7 @@ struct AppState {
     frame_cache: Arc<Mutex<std::collections::HashMap<String, Vec<InputFrame>>>>, // パス -> フレームデータのキャッシュ
     manual_input: Arc<Mutex<InputFrame>>, // 手動入力の現在状態
     app_handle: Arc<Mutex<Option<tauri::AppHandle>>>, // イベント発行用
+    button_order: Arc<Mutex<Vec<String>>>, // ボタンマッピングの順序
 }
 
 // Tauri commands
@@ -227,9 +228,27 @@ fn load_button_mapping(path: String, state: State<AppState>) -> Result<ButtonMap
     let mapping: ButtonMapping = serde_json::from_str(&content)
         .map_err(|e| format!("JSON parse error: {}", e))?;
 
-    // Player\u306b\u30dc\u30bf\u30f3\u30de\u30c3\u30d4\u30f3\u30b0\u3092\u8a2d\u5b9a
+    // 新フォーマットからHashMapとボタン順序を取得
+    let mut button_map = HashMap::new();
+    let mut button_order_vec = Vec::new();
+    
+    for btn in &mapping.mapping {
+        if !btn.controller_button.is_empty() {
+            button_map.insert(btn.user_button.clone(), btn.controller_button[0].clone());
+            // シーケンスで使用するボタンのみを順序リストに追加
+            if btn.use_in_sequence {
+                button_order_vec.push(btn.user_button.clone());
+            }
+        }
+    }
+
+    // Playerにボタンマッピングを設定
     let mut player = state.player.lock().unwrap();
-    player.set_button_mapping(mapping.xbox.clone());
+    player.set_button_mapping(button_map);
+    
+    // シーケンス用ボタンの順序を保存
+    let mut button_order = state.button_order.lock().unwrap();
+    *button_order = button_order_vec;
 
     Ok(mapping)
 }
@@ -422,11 +441,17 @@ fn save_frames_for_edit(path: String, frames: Vec<InputFrame>, state: State<AppS
     let mut file = File::create(&csv_path)
         .map_err(|e| format!("ファイル作成エラー: {}", e))?;
 
-    // ボタン名の順序を最初のフレームから確定
-    let button_names: Vec<String> = if let Some(first_frame) = frames.first() {
+    // ボタン名の順序をマッピング設定から取得
+    let button_order = state.button_order.lock().unwrap();
+    let button_names: Vec<String> = if !button_order.is_empty() {
+        // マッピング設定の順序を使用
+        println!("[save_frames_for_edit] マッピング順序を使用: {:?}", button_order.as_slice());
+        button_order.clone()
+    } else if let Some(first_frame) = frames.first() {
+        // マッピングがロードされていない場合はソート（後方互換性）
         let mut names: Vec<String> = first_frame.buttons.keys().cloned().collect();
         names.sort();
-        println!("[save_frames_for_edit] ボタン名: {:?}", names);
+        println!("[save_frames_for_edit] ソート順を使用: {:?}", names);
         names
     } else {
         Vec::new()
@@ -638,6 +663,7 @@ pub fn run() {
             right_trigger: 0,
         })),
         app_handle: Arc::new(Mutex::new(None)),
+        button_order: Arc::new(Mutex::new(Vec::new())),
     };
 
     // FPS設定に基づいて更新するタスクを起動

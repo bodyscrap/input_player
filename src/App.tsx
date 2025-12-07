@@ -35,7 +35,11 @@ function App() {
     {},
   );
   const [sequenceButtons, setSequenceButtons] = useState<string[]>([]); // シーケンスで使用するボタン
+  const [buttonOrder, setButtonOrder] = useState<string[]>([]); // ボタンの表示順序
   const [activeTestButton, setActiveTestButton] = useState<string | null>(null); // マッピングエディタの試用ボタン
+  const [currentMappingPath, setCurrentMappingPath] = useState<string>(
+    "config/button_mapping.json",
+  ); // 現在のマッピングファイルパス
 
   // Sequence selector state
   const [showSequenceSelector, setShowSequenceSelector] = useState(false);
@@ -186,7 +190,30 @@ function App() {
     }
   };
 
+  const handleLoadMappingFile = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        title: "マッピング設定を選択",
+        filters: [
+          {
+            name: "JSON",
+            extensions: ["json"],
+          },
+        ],
+        multiple: false,
+      });
 
+      if (selected && typeof selected === "string") {
+        // 現在のパスと異なる場合はスロットをクリア
+        const shouldClearSlots = selected !== currentMappingPath;
+        await loadMapping(selected, shouldClearSlots);
+        console.log(`マッピング設定を読み込みました: ${selected}`);
+      }
+    } catch (error) {
+      console.error("マッピングファイル読み込みエラー:", error);
+    }
+  };
 
   const handleInvertToggle = async (checked: boolean) => {
     setInvertHorizontal(checked);
@@ -218,28 +245,40 @@ function App() {
   const buttons = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
   // マッピングを読み込む関数
-  const loadMapping = async () => {
+  const loadMapping = async (path: string = "config/button_mapping.json", clearSlots: boolean = false) => {
     try {
-      const mapping = await api.loadButtonMapping("config/button_mapping.json");
-      // Xboxマッピングをbutton1-10からCSVボタン名への逆マップに変換
+      const mapping = await api.loadButtonMapping(path);
+      
+      // controller_buttonの最初の要素をボタン名として使用（同時押し対応のため配列）
       const reverseMap: Record<string, string> = {};
       const csvButtons: string[] = [];
-      Object.entries(mapping.xbox).forEach(([csvButton, xboxButton]) => {
-        reverseMap[xboxButton as string] = csvButton;
-        csvButtons.push(csvButton);
+      const seqButtons: string[] = [];
+      
+      mapping.mapping.forEach((btn) => {
+        const controllerButton = btn.controller_button[0]; // 最初のボタンを使用
+        reverseMap[controllerButton] = btn.user_button;
+        csvButtons.push(btn.user_button);
+        if (btn.use_in_sequence) {
+          seqButtons.push(btn.user_button);
+        }
       });
+      
       setButtonMapping(reverseMap);
-
-      // シーケンス用ボタンを設定（指定がなければ全ボタン）
-      if (mapping.sequenceButtons && mapping.sequenceButtons.length > 0) {
-        setSequenceButtons(mapping.sequenceButtons);
-      } else {
-        setSequenceButtons(csvButtons);
+      setSequenceButtons(seqButtons);
+      setButtonOrder(csvButtons);
+      
+      // パスが変更された場合、スロットをクリア
+      if (clearSlots && path !== currentMappingPath) {
+        setSequenceSlots(Array(12).fill(null));
+        console.log("マッピング設定が変更されたため、全シーケンススロットをクリアしました");
       }
+      
+      setCurrentMappingPath(path);
     } catch (error) {
       console.log("マッピング読み込みエラー:", error);
       setButtonMapping({});
       setSequenceButtons([]);
+      setButtonOrder([]);
     }
   };
 
@@ -534,7 +573,12 @@ function App() {
         <div className="section-header-with-controls">
           <h2>手動入力</h2>
           <div className="manual-input-controls">
-
+            <div className="mapping-file-info">
+              <span className="mapping-file-label">マッピング設定:</span>
+              <span className="mapping-file-path" title={currentMappingPath}>
+                {currentMappingPath.split(/[\\/]/).pop() || currentMappingPath}
+              </span>
+            </div>
             <button
               onClick={() => setShowMappingEditor(true)}
               className="btn-small"
@@ -947,12 +991,15 @@ function App() {
         <ButtonMappingEditor
           onClose={() => {
             setShowMappingEditor(false);
-            loadMapping();
           }}
           initialConnected={isConnected}
           activeTestButton={activeTestButton}
           setActiveTestButton={setActiveTestButton}
-          onMappingSaved={loadMapping}
+          currentMappingPath={currentMappingPath}
+          onMappingSaved={(filePath) => {
+            // 保存されたファイルでマッピングを更新し、異なるファイルならスロットをクリア
+            loadMapping(filePath, filePath !== currentMappingPath);
+          }}
         />
       )}
 
@@ -973,6 +1020,7 @@ function App() {
       {showSequenceEditor && editingSlotPath && (
         <SequenceEditor
           csvPath={editingSlotPath}
+          buttonOrder={buttonOrder}
           onClose={async (savedPath) => {
             // 保存されたパスがある場合、編集していたスロットに割り当て
             if (savedPath && editingSlotIndex !== null) {

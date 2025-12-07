@@ -144,6 +144,32 @@ h3 {
   flex-wrap: wrap;
 }
 
+.mapping-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: #2a2a2a;
+  border-radius: 6px;
+  border: 1px solid #444;
+}
+
+.mapping-file-label {
+  font-size: 0.9em;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.mapping-file-path {
+  font-size: 0.9em;
+  color: #00ff00;
+  font-family: monospace;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 
 
 /* Input Controls Row (POV + Buttons) */

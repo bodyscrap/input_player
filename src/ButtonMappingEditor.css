@@ -70,6 +70,16 @@
   flex-wrap: wrap;
 }
 
+.current-file-info {
+  font-size: 12px;
+  color: #666;
+  background: #f0f0f0;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-family: monospace;
+}
+
 .btn-file,
 .btn-save,
 .btn-add {
@@ -95,8 +105,15 @@
   color: white;
 }
 
-.btn-save:hover {
+.btn-save:hover:not(:disabled) {
   background: #45a049;
+}
+
+.btn-save:disabled {
+  background: #ccc;
+  color: #888;
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .btn-add {
@@ -156,15 +173,51 @@
   font-weight: 600;
 }
 
-.mapping-table-inline th:nth-child(2),
-.mapping-table-inline td:nth-child(2) {
+.mapping-table-inline tbody tr {
+  transition: background-color 0.2s;
+}
+
+.mapping-table-inline tbody tr:hover {
+  background-color: #f5f5f5;
+}
+
+.mapping-table-inline tbody tr.dragging {
+  opacity: 0.5;
+  background-color: #e3f2fd;
+}
+
+.drag-handle {
+  cursor: move !important;
+  text-align: center;
+  font-size: 18px;
+  color: #999;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  padding: 8px 4px;
+  touch-action: none;
+}
+
+.drag-handle:hover {
+  color: #666;
+  background-color: #f0f0f0;
+  cursor: grab;
+}
+
+.drag-handle:active {
+  cursor: grabbing !important;
+}
+
+.mapping-table-inline th:nth-child(3),
+.mapping-table-inline td:nth-child(3) {
   text-align: center;
   width: 40px;
   color: #666;
 }
 
-.mapping-table-inline th:nth-child(4),
-.mapping-table-inline td:nth-child(4) {
+.mapping-table-inline th:nth-child(5),
+.mapping-table-inline td:nth-child(5) {
   width: 80px;
   text-align: center;
 }
@@ -208,6 +261,32 @@
   border: 1px solid #ccc;
   border-radius: 4px;
   font-size: 13px;
+}
+
+.order-buttons {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.order-button {
+  padding: 2px 8px;
+  margin: 0 2px;
+  background: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.order-button:hover:not(:disabled) {
+  background: #1976d2;
+}
+
+.order-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .remove-button-inline {

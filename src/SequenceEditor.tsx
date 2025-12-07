@@ -13,6 +13,7 @@ interface SequenceEditorProps {
   onSave?: (frames: InputFrame[]) => void; // 保存時にスロットを更新するコールバック
   currentPlayingRow: number | null; // 現在再生中の行(外部から制御)
   sequenceButtons: string[]; // シーケンスで使用可能なボタンのリスト
+  buttonOrder?: string[]; // ボタンの表示順序
 }
 
 function SequenceEditor({
@@ -21,6 +22,7 @@ function SequenceEditor({
   onSave,
   currentPlayingRow,
   sequenceButtons,
+  buttonOrder = [],
 }: SequenceEditorProps) {
   console.log("========== SequenceEditor component created ==========");
   console.log("Props - csvPath:", csvPath);
@@ -136,9 +138,11 @@ function SequenceEditor({
       const loadedFrames = await api.loadFramesForEdit(csvPath);
       console.log("✓ Frames loaded:", loadedFrames.length, "frames");
 
-      // シーケンスボタンのみを使用（非破壊的にソート）
-      const buttonNamesArray = [...sequenceButtons].sort();
-      console.log("✓ Button names (sequence buttons only):", buttonNamesArray);
+      // ボタンの順序を決定: buttonOrderがあればそれを使用、なければsequenceButtonsをソート
+      const buttonNamesArray = buttonOrder && buttonOrder.length > 0
+        ? buttonOrder.filter(btn => sequenceButtons.includes(btn)) // buttonOrderからsequenceButtonsに含まれるもののみ
+        : [...sequenceButtons].sort();
+      console.log("✓ Button names (sequence buttons with order):", buttonNamesArray);
 
       // 各フレームのボタンをsequenceButtonsのみに制限
       const filteredFrames = loadedFrames.map((frame: InputFrame) => ({
@@ -158,7 +162,7 @@ function SequenceEditor({
     }
   };
 
-  const addRow = (afterIndex: number | null) => {
+  const addRow = (atIndex: number | null) => {
     if (isPlaying) {
       setMessage("再生中は編集できません");
       return;
@@ -173,14 +177,14 @@ function SequenceEditor({
     console.log("[addRow] sequenceButtons:", sequenceButtons);
 
     const newFrames = [...frames];
-    const insertIndex = afterIndex !== null ? afterIndex + 1 : frames.length;
+    const insertIndex = atIndex !== null ? atIndex : frames.length;
     newFrames.splice(insertIndex, 0, newFrame);
 
     console.log("[addRow] 更新後のフレーム数:", newFrames.length);
 
     setFrames(newFrames);
     setHasChanges(true);
-    setMessage("行を追加しました");
+    setMessage(`行${insertIndex + 1}に挿入しました`);
   };
 
   const deleteSelected = () => {
@@ -366,7 +370,7 @@ function SequenceEditor({
   };
 
   const handleAddRow = () => {
-    addRow(frames.length - 1); // 最終行の後に追加
+    addRow(frames.length); // 最終行の後に追加
   };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
