@@ -22,7 +22,7 @@ function App() {
   // POV (D-pad) direction - using numpad notation
   const [povDirection, setPovDirection] = useState(5); // 5 = neutral
 
-  // Button states (1-10 for Xbox 360)
+  // Button states (1-12 for Xbox 360)
   const [activeButton, setActiveButton] = useState<number | null>(null);
 
   // Button mapping editor state
@@ -37,9 +37,10 @@ function App() {
   const [sequenceButtons, setSequenceButtons] = useState<string[]>([]); // シーケンスで使用するボタン
   const [buttonOrder, setButtonOrder] = useState<string[]>([]); // ボタンの表示順序
   const [activeTestButton, setActiveTestButton] = useState<string | null>(null); // マッピングエディタの試用ボタン
-  const [currentMappingPath, setCurrentMappingPath] = useState<string>(
-    "config/button_mapping.json",
-  ); // 現在のマッピングファイルパス
+  const [currentMappingPath, setCurrentMappingPath] = useState<string>(() => {
+    // localStorageから前回のマッピングパスを復元
+    return localStorage.getItem("lastMappingPath") || "config/button_mapping.json";
+  }); // 現在のマッピングファイルパス
 
   // Sequence selector state
   const [showSequenceSelector, setShowSequenceSelector] = useState(false);
@@ -55,6 +56,11 @@ function App() {
   const [isPlayingChain, setIsPlayingChain] = useState(false);
   const [currentChainIndex, setCurrentChainIndex] = useState(0);
   const [chainStepMap, setChainStepMap] = useState<number[]>([]); // 各シーケンスの開始ステップ位置
+  
+  // チェーンのドラッグ&ドロップ用の状態
+  const [draggedChainIndex, setDraggedChainIndex] = useState<number | null>(null);
+  const [dragOverChainIndex, setDragOverChainIndex] = useState<number | null>(null);
+  const [isDraggingChain, setIsDraggingChain] = useState(false);
 
   // Sequence editor state (modal)
   const [showSequenceEditor, setShowSequenceEditor] = useState(false);
@@ -245,7 +251,7 @@ function App() {
   const buttons = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
   // マッピングを読み込む関数
-  const loadMapping = async (path: string = "config/button_mapping.json", clearSlots: boolean = false) => {
+  const loadMapping = async (path: string = "config/button_mapping.json", clearSlots: boolean = false, isInitialLoad: boolean = false) => {
     try {
       const mapping = await api.loadButtonMapping(path);
       
@@ -274,11 +280,25 @@ function App() {
       }
       
       setCurrentMappingPath(path);
+      // 成功した場合はlocalStorageに保存（次回起動時に使用）
+      localStorage.setItem("lastMappingPath", path);
+      console.log(`✓ マッピング設定を読み込み、次回起動時に適用: ${path}`);
     } catch (error) {
       console.log("マッピング読み込みエラー:", error);
+      // ファイルが存在しない、または読み込みに失敗した場合は空の状態で初期化
+      // これがデフォルトマッピング（マッピングなし）の状態
       setButtonMapping({});
       setSequenceButtons([]);
       setButtonOrder([]);
+      setCurrentMappingPath("");
+      
+      // 初回起動時のみlocalStorageをクリア（ユーザーが選択したファイルが壊れている場合は保持）
+      if (isInitialLoad) {
+        localStorage.removeItem("lastMappingPath");
+        console.log("マッピングなしで起動（初回または設定ファイル未存在）");
+      } else {
+        console.log("マッピング読み込みに失敗しましたが、マッピングなしで続行");
+      }
     }
   };
 
@@ -381,6 +401,65 @@ function App() {
     newChain.splice(toIndex, 0, moved);
     setSequenceChain(newChain);
   };
+
+  // チェーンのマウスベースドラッグ&ドロップハンドラ
+  const handleChainMouseDown = (e: React.MouseEvent, index: number) => {
+    if (isPlaying || isPlayingChain) return;
+    
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'BUTTON' && target !== e.currentTarget) {
+      return; // 削除ボタンのクリックは無視
+    }
+    
+    e.preventDefault();
+    setDraggedChainIndex(index);
+    setIsDraggingChain(true);
+  };
+
+  const handleChainMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDraggingChain || draggedChainIndex === null) return;
+    
+    const buttons = document.querySelectorAll('.chain-buttons > button');
+    let newDragOverIndex = draggedChainIndex;
+    
+    buttons.forEach((button, index) => {
+      const rect = button.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        newDragOverIndex = index;
+      }
+    });
+    
+    setDragOverChainIndex(newDragOverIndex);
+  }, [isDraggingChain, draggedChainIndex]);
+
+  const handleChainMouseUp = useCallback(() => {
+    if (!isDraggingChain || draggedChainIndex === null) {
+      setIsDraggingChain(false);
+      setDraggedChainIndex(null);
+      setDragOverChainIndex(null);
+      return;
+    }
+
+    if (dragOverChainIndex !== null && draggedChainIndex !== dragOverChainIndex) {
+      moveChainItem(draggedChainIndex, dragOverChainIndex);
+    }
+
+    setIsDraggingChain(false);
+    setDraggedChainIndex(null);
+    setDragOverChainIndex(null);
+  }, [isDraggingChain, draggedChainIndex, dragOverChainIndex]);
+
+  useEffect(() => {
+    if (isDraggingChain) {
+      document.addEventListener('mousemove', handleChainMouseMove);
+      document.addEventListener('mouseup', handleChainMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleChainMouseMove);
+        document.removeEventListener('mouseup', handleChainMouseUp);
+      };
+    }
+  }, [isDraggingChain, handleChainMouseMove, handleChainMouseUp]);
 
   // スロットをクリア
   const clearSlot = (slotIndex: number) => {
@@ -559,31 +638,26 @@ function App() {
     }
   }, [isPlaying, isPlayingChain]);
 
-  // 初回マウント時にマッピングを読み込む
+  // 初回マウント時に前回のマッピングを読み込む
   useEffect(() => {
-    loadMapping();
+    loadMapping(currentMappingPath, false, true);
   }, []);
 
   return (
     <main className="container">
-      <h1>入力便利 じんむくん</h1>
+      <h1>無人入力機 じんむくん</h1>
 
       {/* Manual Input */}
       <section className="section">
         <div className="section-header-with-controls">
           <h2>手動入力</h2>
           <div className="manual-input-controls">
-            <div className="mapping-file-info">
-              <span className="mapping-file-label">マッピング設定:</span>
-              <span className="mapping-file-path" title={currentMappingPath}>
-                {currentMappingPath.split(/[\\/]/).pop() || currentMappingPath}
-              </span>
-            </div>
             <button
               onClick={() => setShowMappingEditor(true)}
-              className="btn-small"
+              className="btn-mapping-config"
+              title={currentMappingPath ? `現在のマッピング: ${currentMappingPath}` : "マッピング設定を開く"}
             >
-              ⚙️ マッピング設定
+              ⚙️ マッピング設定{currentMappingPath ? `: ${currentMappingPath.split(/[\\/]/).pop()}` : " (未設定)"}
             </button>
             <button
               onClick={isConnected ? handleDisconnect : handleConnect}
@@ -627,7 +701,7 @@ function App() {
           <div className="buttons-section">
             <div className="buttons-header">
               <h3>
-                ボタン (1-10){" "}
+                ボタン (1-12){" "}
                 <span className="button-hint">マウスを押している間だけON</span>
               </h3>
               <label className="mapping-display-checkbox">
@@ -921,31 +995,13 @@ function App() {
                   const isCompatible = slot?.compatible ?? true;
                   const isCurrentlyPlaying =
                     isPlayingChain && currentChainIndex === chainIndex;
+                  const isBeingDragged = draggedChainIndex === chainIndex;
+                  const isDropTarget = dragOverChainIndex === chainIndex && draggedChainIndex !== chainIndex;
 
                   return (
                     <button
                       key={`chain-${chainIndex}`}
-                      draggable={!isPlaying && !isPlayingChain}
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData(
-                          "text/plain",
-                          chainIndex.toString(),
-                        );
-                        e.dataTransfer.effectAllowed = "move";
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = "move";
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const fromIndex = parseInt(
-                          e.dataTransfer.getData("text/plain"),
-                        );
-                        if (!isNaN(fromIndex) && fromIndex !== chainIndex) {
-                          moveChainItem(fromIndex, chainIndex);
-                        }
-                      }}
+                      onMouseDown={(e) => handleChainMouseDown(e, chainIndex)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         if (!isPlayingChain) {
@@ -958,7 +1014,11 @@ function App() {
                           : !isCompatible
                             ? "incompatible"
                             : "loaded"
-                      }`}
+                      } ${isBeingDragged ? "dragging-chain" : ""} ${isDropTarget ? "drop-target-chain" : ""}`}
+                      style={{
+                        cursor: isDraggingChain ? 'grabbing' : 'grab',
+                        userSelect: 'none',
+                      }}
                       title={`${
                         slot?.path
                           .replace(/\\/g, "/")

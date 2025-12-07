@@ -139,35 +139,36 @@ h3 {
 
 .manual-input-controls {
   display: flex;
-  gap: 15px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
 }
 
-.mapping-file-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background-color: #2a2a2a;
+.btn-mapping-config {
+  padding: 8px 14px;
+  background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+  color: white;
+  border: none;
   border-radius: 6px;
-  border: 1px solid #444;
-}
-
-.mapping-file-label {
+  cursor: pointer;
   font-size: 0.9em;
-  color: #aaa;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   white-space: nowrap;
-}
-
-.mapping-file-path {
-  font-size: 0.9em;
-  color: #00ff00;
-  font-family: monospace;
-  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 300px;
+}
+
+.btn-mapping-config:hover {
+  background: linear-gradient(135deg, #5a9ff2 0%, #4585c7 100%);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-mapping-config:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 
@@ -733,12 +734,20 @@ progress {
   align-items: center;
 }
 
-.chain-buttons .btn-sequence[draggable="true"] {
-  cursor: grab;
+/* ドラッグ中のチェーンボタン */
+.chain-buttons .btn-sequence.dragging-chain {
+  opacity: 0.4;
+  background: #bbdefb !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  transform: scale(1.05);
 }
 
-.chain-buttons .btn-sequence[draggable="true"]:active {
-  cursor: grabbing;
+/* ドロップターゲットのチェーンボタン */
+.chain-buttons .btn-sequence.drop-target-chain {
+  background: #c8e6c9 !important;
+  border: 3px solid #4caf50 !important;
+  box-shadow: 0 0 12px rgba(76, 175, 80, 0.6);
+  transform: scale(1.02);
 }
 
 .chain-item {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import type { ButtonMapping, UserButton, ControllerType } from "./types";
@@ -309,66 +309,90 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     onClose();
   };
 
-  // ドラッグ&ドロップ用の状態
+  // マウスベースのドラッグ&ドロップ用の状態
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    console.log('Drag start:', index);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', index.toString());
+  const handleMouseDown = (e: React.MouseEvent, index: number) => {
+    // ボタンやセレクトのクリックは無視
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'BUTTON' || target.tagName === 'SELECT' || target.tagName === 'INPUT') {
+      return;
+    }
+    
+    e.preventDefault();
     setDraggedIndex(index);
+    setIsDragging(true);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging || draggedIndex === null) return;
     
-    console.log('Drop at:', dropIndex, 'from:', draggedIndex);
+    // マウス位置からドロップ先のインデックスを計算
+    const rows = document.querySelectorAll('.mapping-table-inline tbody tr');
+    let newDragOverIndex = draggedIndex;
     
-    if (draggedIndex === null || draggedIndex === dropIndex) {
+    rows.forEach((row, index) => {
+      const rect = row.getBoundingClientRect();
+      if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        newDragOverIndex = index;
+      }
+    });
+    
+    setDragOverIndex(newDragOverIndex);
+  }, [isDragging, draggedIndex]);
+
+  const handleMouseUp = useCallback(() => {
+    if (!isDragging || draggedIndex === null) {
+      setIsDragging(false);
       setDraggedIndex(null);
+      setDragOverIndex(null);
       return;
     }
 
-    setMapping((prev) => {
-      const buttons = prev.mapping;
-      const newButtons = [...buttons];
-      const [draggedItem] = newButtons.splice(draggedIndex, 1);
-      newButtons.splice(dropIndex, 0, draggedItem);
-      
-      console.log('New button order:', newButtons.map(b => b.user_button));
-      
-      return {
-        ...prev,
-        mapping: newButtons,
-      };
-    });
-    
-    setHasUnsavedChanges(true);
-    setDraggedIndex(null);
-  };
+    if (dragOverIndex !== null && draggedIndex !== dragOverIndex) {
+      setMapping((prev) => {
+        const buttons = [...prev.mapping];
+        const [draggedItem] = buttons.splice(draggedIndex, 1);
+        buttons.splice(dragOverIndex, 0, draggedItem);
+        
+        return {
+          ...prev,
+          mapping: buttons,
+        };
+      });
+      setHasUnsavedChanges(true);
+    }
 
-  const handleDragEnd = () => {
-    console.log('Drag end');
+    setIsDragging(false);
     setDraggedIndex(null);
-  };
+    setDragOverIndex(null);
+  }, [isDragging, draggedIndex, dragOverIndex]);
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
 
   // マッピング配列を使用
   const userButtons: UserButton[] = mapping.mapping;
 
   return (
-    <div className="button-mapping-editor-overlay" onClick={handleClose}>
-      <div className="button-mapping-editor-window" onClick={(e) => e.stopPropagation()}>
+    <div 
+      className="button-mapping-editor-overlay" 
+      onClick={handleClose}
+    >
+      <div 
+        className="button-mapping-editor-window" 
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="editor-header">
           <h2>ボタンマッピング設定{hasUnsavedChanges ? " *" : ""}</h2>
           <button onClick={handleClose} className="close-button">
@@ -445,27 +469,26 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
           ) : (
             userButtons.map((userButton, index) => {
               const isActive = activeTestButton === userButton.controller_button[0];
-              const isDragging = draggedIndex === index;
+              const isBeingDragged = draggedIndex === index;
+              const isDropTarget = dragOverIndex === index && draggedIndex !== index;
               
               return (
                 <tr 
                   key={userButton.user_button}
-                  onDragOver={handleDragOver}
-                  onDragEnter={handleDragEnter}
-                  onDrop={(e) => handleDrop(e, index)}
-                  className={isDragging ? 'dragging' : ''}
+                  onMouseDown={(e) => handleMouseDown(e, index)}
+                  className={`${isBeingDragged ? 'dragging-row' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+                  style={{
+                    backgroundColor: !isBeingDragged && !isDropTarget ? (index % 2 === 0 ? '#f9f9f9' : 'white') : undefined,
+                    cursor: isDragging ? 'grabbing' : 'grab',
+                    userSelect: 'none',
+                  }}
                 >
-                  <td 
-                    className="drag-handle" 
-                    title="ドラッグして並び替え"
-                    draggable="true"
-                    onDragStart={(e) => handleDragStart(e, index)}
-                    onDragEnd={handleDragEnd}
-                  >
+                  <td className="drag-handle" title="ドラッグして並び替え">
                     ⠿
                   </td>
                   <td>
                     <button
+                      draggable={false}
                       className={`test-csv-button-inline ${isActive ? 'active' : ''}`}
                       onMouseDown={() => handleTestButtonPress(userButton.user_button, userButton.controller_button[0])}
                       onMouseUp={handleTestButtonRelease}
@@ -478,6 +501,7 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
                   <td>→</td>
                   <td>
                     <select
+                      draggable={false}
                       value={userButton.controller_button[0]}
                       onChange={(e) => handleXboxMappingChange(e.target.value, userButton.user_button)}
                       className="xbox-button-select-inline"
@@ -491,6 +515,7 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
                   </td>
                   <td className="checkbox-cell">
                     <input
+                      draggable={false}
                       type="checkbox"
                       checked={userButton.use_in_sequence}
                       onChange={() => toggleSequenceButton(userButton.user_button)}
@@ -498,6 +523,7 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
                   </td>
                   <td className="order-buttons">
                     <button
+                      draggable={false}
                       onClick={() => moveButtonUp(userButton.user_button)}
                       disabled={index === 0}
                       className="order-button"
@@ -506,6 +532,7 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
                       ▲
                     </button>
                     <button
+                      draggable={false}
                       onClick={() => moveButtonDown(userButton.user_button)}
                       disabled={index === userButtons.length - 1}
                       className="order-button"
@@ -516,6 +543,7 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
                   </td>
                   <td>
                     <button
+                      draggable={false}
                       onClick={() => removeXboxMapping(userButton.user_button)}
                       className="remove-button-inline"
                     >

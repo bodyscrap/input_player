@@ -14,7 +14,8 @@
       {
         "title": "input_player",
         "width": 800,
-        "height": 800
+        "height": 800,
+        "dragDropEnabled": true
       }
     ],
     "security": {

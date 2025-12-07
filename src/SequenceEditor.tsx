@@ -35,6 +35,7 @@ function SequenceEditor({
   const [message, setMessage] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
   const [lastSavedPath, setLastSavedPath] = useState<string | null>(null); // 最後に保存したパス
+  const [currentFilePath, setCurrentFilePath] = useState<string>(csvPath); // 現在編集中のファイルパス
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localIsPlaying, setLocalIsPlaying] = useState(false);
   const [internalPlayingRow, setInternalPlayingRow] = useState<number>(-1);
@@ -58,6 +59,7 @@ function SequenceEditor({
     console.log("Loading frames for:", csvPath);
     loadFrames();
     setHasChanges(false); // 開いた時はファイルから読み直す
+    setCurrentFilePath(csvPath); // 初期パスを設定
   }, [csvPath]);
 
   // localIsPlayingの変更を監視
@@ -237,7 +239,7 @@ function SequenceEditor({
     }
 
     // 一時ファイル（新規作成）の場合は別名保存を実行
-    if (csvPath.startsWith("temp_new_sequence_")) {
+    if (currentFilePath.startsWith("temp_new_sequence_")) {
       await handleSaveAs();
       return;
     }
@@ -245,9 +247,9 @@ function SequenceEditor({
     try {
       const { api } = await import("./api");
       // 元のファイルに直接上書き
-      await api.saveFramesForEdit(csvPath, frames);
+      await api.saveFramesForEdit(currentFilePath, frames);
       setHasChanges(false);
-      setLastSavedPath(csvPath); // 保存パスを記録
+      setLastSavedPath(currentFilePath); // 保存パスを記録
       
       // スロットの内容も更新
       if (onSave) {
@@ -296,6 +298,7 @@ function SequenceEditor({
       }
       setHasChanges(false);
       setLastSavedPath(savePath); // 保存パスを記録
+      setCurrentFilePath(savePath); // 現在のファイルパスを更新（これで次回は上書き保存になる）
       setMessage(`✓ 別名保存しました（スロットも更新）: ${savePath}`);
     } catch (error) {
       setMessage(`保存エラー: ${error}`);
@@ -414,8 +417,8 @@ function SequenceEditor({
     9: "↗",
   };
 
-  // ファイル名を抽出
-  const fileName = csvPath
+  // ファイル名を抽出（現在編集中のパスから取得）
+  const fileName = currentFilePath
     .replace(/\\/g, "/")
     .split("/")
     .pop()
@@ -446,8 +449,11 @@ function SequenceEditor({
               onClick={handleSave}
               disabled={!hasChanges || isPlaying}
               className="btn-save"
+              title={currentFilePath.startsWith("temp_new_sequence_") 
+                ? "新規ファイルは「別名保存」で保存してください" 
+                : `${currentFilePath}に上書き保存`}
             >
-              💾 保存
+              💾 {currentFilePath.startsWith("temp_new_sequence_") ? "保存" : "上書き保存"}
             </button>
             <button
               onClick={handleSaveAs}
