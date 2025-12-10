@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
-import type { SequenceSlot } from "./types";
 import "./SequenceSelector.css";
 
 interface SequenceSelectorProps {
@@ -13,7 +12,6 @@ interface SequenceSelectorProps {
   ) => void;
   availableButtons: string[];
   targetSlot: number | null;
-  currentSlots: (SequenceSlot | null)[];
 }
 
 function SequenceSelector({
@@ -21,12 +19,12 @@ function SequenceSelector({
   onSelect,
   availableButtons,
   targetSlot,
-  currentSlots,
 }: SequenceSelectorProps) {
   const [csvPath, setCsvPath] = useState("");
-  const [selectedSlot, setSelectedSlot] = useState(targetSlot ?? 0);
+  const [selectedSlot] = useState(targetSlot ?? 0);
   const [csvButtons, setCsvButtons] = useState<string[]>([]);
   const [isCompatible, setIsCompatible] = useState(false);
+  // @ts-expect-error - message is used for logging via setMessage
   const [message, setMessage] = useState("");
 
   const handleLoad = () => {

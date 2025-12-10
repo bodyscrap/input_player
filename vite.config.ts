@@ -15,7 +15,6 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(__dirname, "index.html"),
         editor: resolve(__dirname, "editor.html"),
-        "editor-test": resolve(__dirname, "editor-test.html"),
       },
     },
   },

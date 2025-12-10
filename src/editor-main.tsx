@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import SequenceEditorWindow from "./SequenceEditorWindow";
-import "./index.css";
+import "./App.css";
 
 console.log("========== Editor main script loading ==========");
 

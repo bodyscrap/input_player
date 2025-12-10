@@ -36,9 +36,12 @@ function SequenceEditorWindow() {
     const loadMapping = async () => {
       try {
         const mapping = await api.loadButtonMapping("config/button_mapping.json");
-        const csvButtons = Object.keys(mapping.xbox);
-        if (mapping.sequenceButtons && mapping.sequenceButtons.length > 0) {
-          setSequenceButtons(mapping.sequenceButtons);
+        const csvButtons = mapping.mapping.map(btn => btn.user_button);
+        const seqButtons = mapping.mapping
+          .filter(btn => btn.use_in_sequence)
+          .map(btn => btn.user_button);
+        if (seqButtons.length > 0) {
+          setSequenceButtons(seqButtons);
         } else {
           setSequenceButtons(csvButtons);
         }

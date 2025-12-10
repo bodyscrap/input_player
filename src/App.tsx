@@ -196,30 +196,8 @@ function App() {
     }
   };
 
-  const handleLoadMappingFile = async () => {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        title: "マッピング設定を選択",
-        filters: [
-          {
-            name: "JSON",
-            extensions: ["json"],
-          },
-        ],
-        multiple: false,
-      });
-
-      if (selected && typeof selected === "string") {
-        // 現在のパスと異なる場合はスロットをクリア
-        const shouldClearSlots = selected !== currentMappingPath;
-        await loadMapping(selected, shouldClearSlots);
-        console.log(`マッピング設定を読み込みました: ${selected}`);
-      }
-    } catch (error) {
-      console.error("マッピングファイル読み込みエラー:", error);
-    }
-  };
+  // Note: handleLoadMappingFile is used through the button mapping editor
+  // which calls loadMapping directly
 
   const handleInvertToggle = async (checked: boolean) => {
     setInvertHorizontal(checked);
@@ -576,7 +554,6 @@ function App() {
 
     try {
       const { save } = await import("@tauri-apps/plugin-dialog");
-      const { ask } = await import("@tauri-apps/plugin-dialog");
 
       // ファイル保存ダイアログ
       const savePath = await save({
@@ -1072,7 +1049,6 @@ function App() {
           }
           availableButtons={sequenceButtons}
           targetSlot={loadingSlot}
-          currentSlots={sequenceSlots}
         />
       )}
 

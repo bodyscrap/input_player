@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
-import type { ButtonMapping, UserButton, ControllerType } from "./types";
+import type { ButtonMapping, UserButton } from "./types";
 import "./ButtonMappingEditor.css";
 
 interface ButtonMappingEditorProps {
@@ -22,7 +22,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
   const [isConnected, setIsConnected] = useState(initialConnected);
   const [currentFilePath, setCurrentFilePath] = useState<string>(currentMappingPath);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [originalMapping, setOriginalMapping] = useState<ButtonMapping | null>(null);
 
   // Xbox 360コントローラーのボタン一覧
   const xboxButtons = [
@@ -60,7 +59,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     try {
       const loaded = await api.loadButtonMapping(currentMappingPath);
       setMapping(loaded);
-      setOriginalMapping(loaded);
       setCurrentFilePath(currentMappingPath);
       setHasUnsavedChanges(false);
       setMessage(`現在のマッピングを読み込みました: ${currentMappingPath}`);
@@ -71,7 +69,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
         mapping: [],
       };
       setMapping(emptyMapping);
-      setOriginalMapping(emptyMapping);
       setHasUnsavedChanges(false);
     }
   };
@@ -79,7 +76,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
   const saveMappingToFile = async () => {
     try {
       await api.saveButtonMapping(currentFilePath, mapping);
-      setOriginalMapping(mapping);
       setHasUnsavedChanges(false);
       setMessage(`マッピングを保存しました: ${currentFilePath}`);
       // 親コンポーネントに保存を通知（ファイルパスを渡す）
@@ -101,7 +97,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
       mapping: [],
     };
     setMapping(newMapping);
-    setOriginalMapping(newMapping);
     setCurrentFilePath("");
     setHasUnsavedChanges(false);
     setMessage("新規マッピングを作成しました。ボタンを追加してください。");
@@ -119,7 +114,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     try {
       await api.saveButtonMapping(file, mapping);
       setCurrentFilePath(file);
-      setOriginalMapping(mapping);
       setHasUnsavedChanges(false);
       setMessage(`マッピングを保存しました: ${file}`);
       // 親コンポーネントに保存を通知（ファイルパスを渡す）
@@ -148,7 +142,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
     try {
       const loaded = await api.loadButtonMapping(file);
       setMapping(loaded);
-      setOriginalMapping(loaded);
       setCurrentFilePath(file);
       setHasUnsavedChanges(false);
       setMessage(`マッピングファイルを読み込みました: ${file}`);
@@ -195,7 +188,6 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
       };
       
       setMapping(newMapping);
-      setOriginalMapping(newMapping);
       setCurrentFilePath(""); // ファイルパスをクリア
       setHasUnsavedChanges(false);
       setMessage(`CSVから${buttons.length}個のボタンを検出し、マッピングを作成しました。「名前を付けて保存」で保存してください。`);
