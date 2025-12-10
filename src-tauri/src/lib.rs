@@ -67,6 +67,18 @@ fn is_controller_connected(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
+fn get_app_dir() -> Result<String, String> {
+    // 実行ファイルのディレクトリを取得
+    std::env::current_exe()
+        .map_err(|e| format!("実行ファイルパスの取得エラー: {}", e))?
+        .parent()
+        .ok_or_else(|| "親ディレクトリが見つかりません".to_string())?
+        .to_str()
+        .ok_or_else(|| "パスの変換エラー".to_string())
+        .map(|s| s.to_string())
+}
+
+#[tauri::command]
 fn load_input_sequence(frames: Vec<types::InputFrame>, state: State<AppState>) -> Result<usize, String> {
     println!("[load_input_sequence] メモリからシーケンス読み込み - {}フレーム", frames.len());
 
@@ -767,6 +779,7 @@ pub fn run() {
             connect_controller,
             disconnect_controller,
             is_controller_connected,
+            get_app_dir,
             load_input_file,
             load_input_sequence,
             start_playback,

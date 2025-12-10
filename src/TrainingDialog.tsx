@@ -51,13 +51,9 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
       if (savedOutputDir) {
         setConfig((prev) => ({ ...prev, outputDir: savedOutputDir }));
       } else {
-        // デフォルト: アプリ直下のmodelsディレクトリ
-        const defaultModelsDir = await path.join(
-          await path.appDataDir(),
-          "..",
-          "..",
-          "models"
-        );
+        // デフォルト: 実行ファイル(exe)と同階層のmodelsディレクトリ
+        const appDir = await invoke<string>("get_app_dir");
+        const defaultModelsDir = await path.join(appDir, "models");
         setConfig((prev) => ({ ...prev, outputDir: defaultModelsDir }));
       }
     };
