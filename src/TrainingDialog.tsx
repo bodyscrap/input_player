@@ -31,7 +31,7 @@ interface TrainingProgress {
 function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
   const [config, setConfig] = useState<TrainingConfig>({
     dataDir: "",
-    outputDir: "",
+    outputDir: "", // useEffectで初期化
     numEpochs: 50,
     batchSize: 8,  // input_analyzerと同じデフォルト値（GPUメモリ効率的）
     learningRate: 0.001,
@@ -43,6 +43,26 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
   const [trainingProgress, setTrainingProgress] = useState<TrainingProgress | null>(null);
   const [trainingMessage, setTrainingMessage] = useState<string>("");
   const [trainingComplete, setTrainingComplete] = useState(false);
+
+  // 初回起動時にmodelsディレクトリをデフォルト出力先に設定
+  useEffect(() => {
+    const initOutputDir = async () => {
+      const savedOutputDir = localStorage.getItem("trainingOutputDir");
+      if (savedOutputDir) {
+        setConfig((prev) => ({ ...prev, outputDir: savedOutputDir }));
+      } else {
+        // デフォルト: アプリ直下のmodelsディレクトリ
+        const defaultModelsDir = await path.join(
+          await path.appDataDir(),
+          "..",
+          "..",
+          "models"
+        );
+        setConfig((prev) => ({ ...prev, outputDir: defaultModelsDir }));
+      }
+    };
+    initOutputDir();
+  }, []);
 
   // ボタンラベルを自動検出
   useEffect(() => {
@@ -116,7 +136,10 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
       });
 
       if (selected) {
-        setConfig({ ...config, outputDir: selected as string });
+        const selectedPath = selected as string;
+        setConfig({ ...config, outputDir: selectedPath });
+        // 選択したパスをlocalStorageに保存
+        localStorage.setItem("trainingOutputDir", selectedPath);
       }
     } catch (error) {
       console.error("ディレクトリ選択エラー:", error);
