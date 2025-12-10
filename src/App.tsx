@@ -1,10 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import "./App.css";
 import { api } from "./api";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import ButtonMappingEditor from "./ButtonMappingEditor";
 import SequenceSelector from "./SequenceSelector";
 import SequenceEditor from "./SequenceEditor";
+import VideoAnalyzer from "./VideoAnalyzer";
+import BackendSettings from "./BackendSettings";
+import TrainingDialog from "./TrainingDialog";
 import type { SequenceSlot, InputFrame } from "./types";
 
 function App() {
@@ -73,6 +77,19 @@ function App() {
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [exportedFrames, setExportedFrames] = useState<InputFrame[]>([]);
 
+  // Video analyzer state
+  const [showVideoAnalyzer, setShowVideoAnalyzer] = useState(false);
+  const [videoAnalyzerStep, setVideoAnalyzerStep] = useState<"region-setup" | "collect-data">("region-setup");
+  const [_gstreamerAvailable, setGstreamerAvailable] = useState<boolean | null>(true); // 初期値はtrue（楽観的）
+
+  // ML training state
+  const [showTrainingDialog, setShowTrainingDialog] = useState(false);
+  const [showBackendSettings, setShowBackendSettings] = useState(false);
+  const [mlBackend, setMlBackend] = useState<"cpu" | "wgpu">(() => {
+    const saved = localStorage.getItem("mlBackend");
+    return (saved === "cpu" || saved === "wgpu") ? saved : "cpu";
+  });
+
   // Refs to hold the latest values for use in interval
   const povDirectionRef = useRef(povDirection);
   const activeButtonRef = useRef(activeButton);
@@ -82,6 +99,25 @@ function App() {
   useEffect(() => {
     localStorage.setItem("useMappingLabels", String(useMappingLabels));
   }, [useMappingLabels]);
+
+  // Save ML backend to localStorage
+  useEffect(() => {
+    localStorage.setItem("mlBackend", mlBackend);
+  }, [mlBackend]);
+
+  // GStreamerの可用性をチェック
+  useEffect(() => {
+    const checkGStreamer = async () => {
+      try {
+        await invoke("check_gstreamer_available");
+        setGstreamerAvailable(true);
+      } catch (error) {
+        console.warn("GStreamer is not available:", error);
+        setGstreamerAvailable(false);
+      }
+    };
+    checkGStreamer();
+  }, []);
 
   // バックエンドからの再生状態変化イベントをリッスン
   useEffect(() => {
@@ -627,14 +663,20 @@ function App() {
       {/* Manual Input */}
       <section className="section">
         <div className="section-header-with-controls">
-          <h2>手動入力</h2>
-          <div className="manual-input-controls">
+          <div className="top-buttons">
             <button
               onClick={() => setShowMappingEditor(true)}
               className="btn-mapping-config"
               title={currentMappingPath ? `現在のマッピング: ${currentMappingPath}` : "マッピング設定を開く"}
             >
-              ⚙️ マッピング設定{currentMappingPath ? `: ${currentMappingPath.split(/[\\/]/).pop()}` : " (未設定)"}
+              ⚙️ マッピング設定
+            </button>
+            <button
+              onClick={() => setShowBackendSettings(true)}
+              className="btn-backend-config"
+              title={`現在のバックエンド: ${mlBackend.toUpperCase()}`}
+            >
+              🖥️ バックエンド: {mlBackend.toUpperCase()}
             </button>
             <button
               onClick={isConnected ? handleDisconnect : handleConnect}
@@ -646,6 +688,44 @@ function App() {
               <span className="status-text">
                 Xbox 360: {isConnected ? "接続中" : "未接続"}
               </span>
+            </button>
+          </div>
+          <div className="ml-buttons">
+            <button
+              onClick={() => {
+                setVideoAnalyzerStep("region-setup");
+                setShowVideoAnalyzer(true);
+              }}
+              className="btn-video-analyzer"
+              title="動画から入力履歴を抽出"
+            >
+              📍 解析範囲設定
+            </button>
+            <button
+              onClick={() => {
+                setVideoAnalyzerStep("collect-data");
+                setShowVideoAnalyzer(true);
+              }}
+              className="btn-collect-data"
+              title="学習用タイル画像を収集"
+            >
+              📊 学習データ収集
+            </button>
+            <button
+              onClick={() => setShowTrainingDialog(true)}
+              className="btn-train-model"
+              title="分類モデルを学習"
+            >
+              🧠 モデル学習
+            </button>
+            <button
+              onClick={() => alert("タイル分類機能は現在開発中です")}
+              className="btn-tile-classify"
+              title="タイル画像を分類（開発中）"
+              disabled={true}
+              style={{ opacity: 0.5, cursor: "not-allowed" }}
+            >
+              🔍 タイル分類
             </button>
           </div>
         </div>
@@ -1242,6 +1322,31 @@ function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Video Analyzer Modal */}
+      {showVideoAnalyzer && (
+        <VideoAnalyzer
+          onClose={() => setShowVideoAnalyzer(false)}
+          initialStep={videoAnalyzerStep}
+        />
+      )}
+
+      {/* Backend Settings Modal */}
+      {showBackendSettings && (
+        <BackendSettings
+          currentBackend={mlBackend}
+          onBackendChange={setMlBackend}
+          onClose={() => setShowBackendSettings(false)}
+        />
+      )}
+
+      {/* Training Dialog Modal */}
+      {showTrainingDialog && (
+        <TrainingDialog
+          mlBackend={mlBackend}
+          onClose={() => setShowTrainingDialog(false)}
+        />
       )}
     </main>
   );

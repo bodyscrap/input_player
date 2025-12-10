@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "input_player"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -18,9 +19,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 vigem-client = "0.1"
@@ -29,3 +31,36 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 base64 = "0.22"
 
+# 動画処理（GStreamer）
+gstreamer = "0.23"
+gstreamer-app = "0.23"
+gstreamer-video = "0.23"
+gstreamer-pbutils = "0.23"
+
+# 画像処理
+image = "0.25"
+
+# 機械学習（Burn）
+burn = { version = "0.19.1", features = ["train", "wgpu"], optional = true }
+burn-ndarray = { version = "0.19.1", optional = true }
+burn-wgpu = { version = "0.19.1", optional = true }
+burn-autodiff = { version = "0.19.1", optional = true }
+burn-dataset = { version = "0.19.1", optional = true }
+
+# アーカイブ
+tar = "0.4"
+flate2 = "1.0"
+
+# 時刻
+chrono = "0.4"
+
+# 乱数
+rand = "0.8"
+
+[[bin]]
+name = "test_analyzer"
+path = "src/bin/test_analyzer.rs"
+
+[features]
+default = ["ml"]
+ml = ["burn", "burn-ndarray", "burn-wgpu", "burn-autodiff", "burn-dataset"]

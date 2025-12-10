@@ -2,6 +2,15 @@ mod types;
 mod controller;
 mod csv_loader;
 mod player;
+mod analysis_commands;
+mod ml_commands;
+
+// 入力解析機能のモジュール
+pub mod video;
+pub mod analyzer;
+pub mod model;
+#[cfg(feature = "ml")]
+pub mod ml;
 
 use controller::Controller;
 use csv_loader::load_csv;
@@ -745,6 +754,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(move |app| {
             // AppHandleを保存
             let handle = app.handle().clone();
@@ -778,6 +788,21 @@ pub fn run() {
             save_frames_for_edit,
             get_current_playing_frame,
             open_editor_window,
+            // 動画解析関連のコマンド
+            analysis_commands::check_gstreamer_available,
+            analysis_commands::get_video_info,
+            analysis_commands::save_analysis_region,
+            analysis_commands::load_analysis_region,
+            analysis_commands::extract_preview_frame,
+            analysis_commands::extract_tiles_from_video,
+            analysis_commands::collect_training_data,
+            analysis_commands::create_default_classification_folders,
+            analysis_commands::create_training_directory,
+            // 機械学習関連のコマンド
+            ml_commands::extract_input_history,
+            ml_commands::train_classification_model,
+            ml_commands::classify_video_tiles,
+            ml_commands::get_button_labels_from_data_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
