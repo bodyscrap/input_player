@@ -624,6 +624,64 @@ pub fn classify_video_tiles(
     Err("機械学習機能が有効化されていません".to_string())
 }
 
+#[cfg(not(feature = "ml"))]
+#[tauri::command]
+pub fn save_button_order_metadata(_data_dir: String, _button_labels: Vec<String>) -> Result<(), String> {
+    Err("機械学習機能が有効化されていません".to_string())
+}
+
+#[cfg(not(feature = "ml"))]
+#[tauri::command]
+pub fn load_button_order_metadata(_data_dir: String) -> Result<Option<Vec<String>>, String> {
+    Err("機械学習機能が有効化されていません".to_string())
+}
+
+/// ボタン順序メタデータを保存
+#[cfg(feature = "ml")]
+#[tauri::command]
+pub fn save_button_order_metadata(data_dir: String, button_labels: Vec<String>) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+    use serde_json;
+    
+    let data_path = Path::new(&data_dir);
+    let metadata_path = data_path.join("button_order.json");
+    
+    let json = serde_json::to_string_pretty(&button_labels)
+        .map_err(|e| format!("JSONシリアライズエラー: {}", e))?;
+    
+    fs::write(&metadata_path, json)
+        .map_err(|e| format!("メタデータファイルの書き込みエラー: {}", e))?;
+    
+    println!("[ML] ボタン順序メタデータを保存: {:?}", metadata_path);
+    Ok(())
+}
+
+/// ボタン順序メタデータを読み込み
+#[cfg(feature = "ml")]
+#[tauri::command]
+pub fn load_button_order_metadata(data_dir: String) -> Result<Option<Vec<String>>, String> {
+    use std::fs;
+    use std::path::Path;
+    use serde_json;
+    
+    let data_path = Path::new(&data_dir);
+    let metadata_path = data_path.join("button_order.json");
+    
+    if !metadata_path.exists() {
+        return Ok(None);
+    }
+    
+    let content = fs::read_to_string(&metadata_path)
+        .map_err(|e| format!("メタデータファイルの読み込みエラー: {}", e))?;
+    
+    let labels: Vec<String> = serde_json::from_str(&content)
+        .map_err(|e| format!("JSONパースエラー: {}", e))?;
+    
+    println!("[ML] ボタン順序メタデータを読み込み: {:?}", labels);
+    Ok(Some(labels))
+}
+
 /// 学習データディレクトリからボタンラベルを取得
 /// 
 /// buttons.txtが存在する場合はそれを読み込み、

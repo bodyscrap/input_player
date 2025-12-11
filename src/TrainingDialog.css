@@ -24,6 +24,7 @@
   justify-content: center;
   z-index: 1000;
   animation: fadeIn 0.2s ease;
+  pointer-events: auto;
 }
 
 @keyframes fadeIn {
@@ -325,6 +326,7 @@
   border-radius: 6px;
   max-height: 250px;
   overflow-y: auto;
+  min-height: 100px;
 }
 
 .label-chip-draggable {
@@ -341,22 +343,37 @@
   user-select: none;
   transition: all 0.2s;
   border: 2px solid transparent;
+  position: relative;
+}
+
+.label-chip-draggable .drag-handle,
+.label-chip-draggable .label-text {
+  pointer-events: none;
 }
 
 .label-chip-draggable:hover {
   background: #bbdefb;
   border-color: #90caf9;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .label-chip-draggable.dragging {
-  opacity: 0.5;
+  opacity: 0.3;
   background: #90caf9;
+}
+
+.label-chip-draggable.drag-over {
+  background: #e3f2fd;
+  border: 2px dashed #2196f3;
+  transform: translateY(-2px);
 }
 
 .drag-handle {
   color: #999;
   font-size: 16px;
   cursor: grab;
+  user-select: none;
 }
 
 .label-chip-draggable:active .drag-handle {
@@ -365,6 +382,7 @@
 
 .label-text {
   flex: 1;
+  user-select: none;
 }
 
 .class-order-info {

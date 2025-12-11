@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import "./VideoAnalyzer.css";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 
 interface VideoInfo {
   width: number;
@@ -344,6 +344,8 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup" }:
 
   // 学習データ収集（GStreamer AppSinkを使用）
   const handleCollectTrainingData = async () => {
+    console.log("[handleCollectTrainingData] 開始");
+    
     if (!tileOutputDir) {
       alert("出力先ディレクトリを選択してください");
       return;
@@ -366,8 +368,11 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup" }:
         tile_height: region.tile_size,
         columns: region.cols,
         rows: 1,
+        video_width: videoInfo?.width || 1920,
+        video_height: videoInfo?.height || 1080,
       };
 
+      console.log("[handleCollectTrainingData] collect_training_data呼び出し");
       const result = await invoke<{ tile_count: number; frame_count: number; message: string }>("collect_training_data", {
         videoPath,
         outputDir: tileOutputDir,
@@ -375,21 +380,30 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup" }:
         region: regionToSend,
       });
 
-      // デフォルトフォルダ作成の確認
-      const createFolders = window.confirm(
-        `${result.message}\n出力先: ${tileOutputDir}\n\n抽出されたフレーム数: ${result.frame_count}\nタイル総数: ${result.tile_count}\n\n次のステップ:\n1. 抽出された画像を確認\n2. クラスごとにフォルダ分け\n3. モデル学習を実行\n\nデフォルトの分類フォルダ（dir_1～dir_9, others）を作成しますか？`
+      console.log("[handleCollectTrainingData] 収集完了:", result);
+
+      // デフォルトフォルダ作成の確認（Tauri APIを使用）
+      const createFolders = await ask(
+        `学習データ収集が完了しました。\n\n出力先: ${tileOutputDir}\n抽出されたフレーム数: ${result.frame_count}\nタイル総数: ${result.tile_count}\n\nデフォルトの分類フォルダ（dir_1～dir_9, others）を作成しますか？\n\n※ 後で手動でフォルダを作成することもできます。`,
+        { title: "学習データ収集完了", kind: "info" }
       );
 
-      if (createFolders) {
+      console.log("[handleCollectTrainingData] 確認ダイアログ結果:", createFolders, typeof createFolders);
+
+      if (createFolders === true) {
+        console.log("[handleCollectTrainingData] フォルダ作成開始");
         try {
           await invoke("create_default_classification_folders", {
             outputDir: tileOutputDir,
           });
-          alert("デフォルトフォルダを作成しました。\n\ndir_1, dir_2, dir_3, dir_4, dir_6, dir_7, dir_8, dir_9, others");
+          console.log("[handleCollectTrainingData] フォルダ作成完了");
+          alert("デフォルトフォルダを作成しました。\n\n作成されたフォルダ:\ndir_1, dir_2, dir_3, dir_4, dir_6, dir_7, dir_8, dir_9, others\n\n次のステップ:\n1. 抽出された画像をクラスごとにフォルダ分け\n2. モデル学習を実行");
         } catch (error) {
           console.error("フォルダ作成エラー:", error);
           alert(`フォルダの作成に失敗しました: ${error}`);
         }
+      } else {
+        console.log("[handleCollectTrainingData] フォルダ作成キャンセル");
       }
 
       onClose();

@@ -820,6 +820,8 @@ pub fn run() {
             ml_commands::classify_video_tiles,
             ml_commands::extract_and_classify_tiles,
             ml_commands::get_button_labels_from_data_dir,
+            ml_commands::save_button_order_metadata,
+            ml_commands::load_button_order_metadata,
             ml_commands::mp4_to_sequence,
         ])
         .run(tauri::generate_context!())

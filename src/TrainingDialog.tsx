@@ -39,6 +39,7 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
 
   const [buttonLabels, setButtonLabels] = useState<string[]>([]);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [isTraining, setIsTraining] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState<TrainingProgress | null>(null);
   const [trainingMessage, setTrainingMessage] = useState<string>("");
@@ -60,51 +61,88 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
     initOutputDir();
   }, []);
 
-  // ボタンラベルを自動検出
+  // ボタンラベルを自動検出（メタデータ優先）
   useEffect(() => {
     if (config.dataDir) {
-      detectButtonLabels();
+      loadButtonLabelsWithMetadata();
     }
   }, [config.dataDir]);
 
-  const detectButtonLabels = async () => {
+  const loadButtonLabelsWithMetadata = async () => {
     try {
-      // バックエンドからbuttons.txtまたはフォルダ名を取得
-      const labels = await invoke<string[]>("get_button_labels_from_data_dir", {
+      // 1. メタデータファイルがあれば読み込み
+      const metadata = await invoke<string[] | null>("load_button_order_metadata", {
         dataDir: config.dataDir,
       });
-      setButtonLabels(labels);
+      
+      if (metadata && metadata.length > 0) {
+        console.log("[メタデータ] ボタン順序を復元:", metadata);
+        setButtonLabels(metadata);
+      } else {
+        // 2. メタデータがない場合はフォルダ名から生成して保存
+        console.log("[メタデータ] メタデータがないため、ボタンを自動検出して保存");
+        const labels = await invoke<string[]>("get_button_labels_from_data_dir", {
+          dataDir: config.dataDir,
+        });
+        setButtonLabels(labels);
+        
+        // 検出したラベルをメタデータとして保存
+        if (labels.length > 0) {
+          await invoke("save_button_order_metadata", {
+            dataDir: config.dataDir,
+            buttonLabels: labels,
+          });
+          console.log("[メタデータ] 初期ボタン順序を保存:", labels);
+        }
+      }
     } catch (error) {
-      console.error("ボタンラベルの検出に失敗:", error);
+      console.error("ボタンラベルの検出/読み込みに失敗:", error);
       setButtonLabels([]);
     }
   };
 
-  // ドラッグ&ドロップでボタンラベルを並び替え
-  const handleDragStart = (e: React.DragEvent, index: number) => {
+  // マウスベースのドラッグ&ドロップでボタンラベルを並び替え
+  const handleMouseDown = (index: number) => {
+    if (isTraining) return;
     setDraggedIndex(index);
-    e.dataTransfer.effectAllowed = "move";
   };
 
-  const handleDragOver = (e: React.DragEvent, _index: number) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+  const handleMouseEnter = (index: number) => {
+    if (draggedIndex === null || isTraining) return;
+    setDragOverIndex(index);
   };
 
-  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
-    e.preventDefault();
-    if (draggedIndex === null || draggedIndex === dropIndex) return;
+  const handleMouseUp = async () => {
+    if (draggedIndex === null || dragOverIndex === null || isTraining) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    if (draggedIndex === dragOverIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
 
     const newLabels = [...buttonLabels];
     const [draggedItem] = newLabels.splice(draggedIndex, 1);
-    newLabels.splice(dropIndex, 0, draggedItem);
+    newLabels.splice(dragOverIndex, 0, draggedItem);
 
     setButtonLabels(newLabels);
     setDraggedIndex(null);
-  };
+    setDragOverIndex(null);
 
-  const handleDragEnd = () => {
-    setDraggedIndex(null);
+    // 3. 並び替え時にメタデータを更新
+    try {
+      await invoke("save_button_order_metadata", {
+        dataDir: config.dataDir,
+        buttonLabels: newLabels,
+      });
+      console.log("[メタデータ] 並び替え後の順序を保存:", newLabels);
+    } catch (error) {
+      console.error("メタデータ保存エラー:", error);
+    }
   };
 
   const handleSelectDataDir = async () => {
@@ -117,6 +155,7 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
 
       if (selected) {
         setConfig({ ...config, dataDir: selected as string });
+        // useEffectが自動的にメタデータ読み込みを実行
       }
     } catch (error) {
       console.error("ディレクトリ選択エラー:", error);
@@ -170,6 +209,18 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
       const outputFileName = `${dataDirName}.tar.gz`;
       const outputPath = await path.join(config.outputDir, outputFileName);
 
+      // ボタン順序メタデータを保存
+      try {
+        await invoke("save_button_order_metadata", {
+          dataDir: config.dataDir,
+          buttonLabels: buttonLabels,
+        });
+        console.log("[メタデータ] ボタン順序を保存:", buttonLabels);
+      } catch (error) {
+        console.error("メタデータ保存エラー:", error);
+        // エラーでも学習は続行
+      }
+
       // 進捗チャンネルを作成
       const progressChannel = new Channel<TrainingProgress>();
       progressChannel.onmessage = (progress) => {
@@ -199,16 +250,16 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="training-dialog-overlay" onClick={onClose}>
       <div className="training-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
+        <div className="training-header">
           <h2>🧠 モデル学習</h2>
           <button className="close-button" onClick={onClose}>
             ✕
           </button>
         </div>
 
-        <div className="modal-body">
+        <div className="training-content">
           <div className="backend-info">
             <strong>使用バックエンド:</strong> {mlBackend.toUpperCase()}
           </div>
@@ -300,12 +351,11 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
                   {buttonLabels.map((label, idx) => (
                     <div
                       key={idx}
-                      className={`label-chip-draggable ${draggedIndex === idx ? "dragging" : ""}`}
-                      draggable={!isTraining}
-                      onDragStart={(e) => handleDragStart(e, idx)}
-                      onDragOver={(e) => handleDragOver(e, idx)}
-                      onDrop={(e) => handleDrop(e, idx)}
-                      onDragEnd={handleDragEnd}
+                      className={`label-chip-draggable ${draggedIndex === idx ? "dragging" : ""} ${dragOverIndex === idx && draggedIndex !== idx ? "drag-over" : ""}`}
+                      onMouseDown={() => handleMouseDown(idx)}
+                      onMouseEnter={() => handleMouseEnter(idx)}
+                      onMouseUp={handleMouseUp}
+                      style={{ cursor: isTraining ? "default" : "grab" }}
                     >
                       <span className="drag-handle">⋮⋮</span>
                       <span className="label-text">{label}</span>
@@ -363,7 +413,7 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
           )}
         </div>
 
-        <div className="modal-footer">
+        <div className="training-footer">
           <button className="btn-cancel" onClick={onClose} disabled={isTraining}>
             {trainingComplete ? "閉じる" : "キャンセル"}
           </button>

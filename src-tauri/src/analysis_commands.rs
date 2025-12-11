@@ -270,6 +270,7 @@ pub fn collect_training_data(
     
     Ok(ExtractTilesResponse {
         tile_count,
+        frame_count: extracted_frame_count,
         message: format!("{}フレームから{}個のタイルを抽出しました", extracted_frame_count, tile_count),
     })
 }
@@ -299,6 +300,7 @@ pub fn extract_tiles_from_video(
         .map_err(|e| format!("出力ディレクトリの作成に失敗: {}", e))?;
     
     let mut tile_count = 0;
+    let frame_count = frame_paths.len() as u32;
     
     // 各フレームからタイルを切り出し
     for (frame_idx, frame_path) in frame_paths.iter().enumerate() {
@@ -337,13 +339,15 @@ pub fn extract_tiles_from_video(
     
     Ok(ExtractTilesResponse {
         tile_count,
-        message: format!("{}個のタイルを抽出しました", tile_count),
+        frame_count,
+        message: format!("{}フレームから{}個のタイルを抽出しました", frame_count, tile_count),
     })
 }
 
 #[derive(Debug, Serialize)]
 pub struct ExtractTilesResponse {
     pub tile_count: usize,
+    pub frame_count: u32,
     pub message: String,
 }
 
