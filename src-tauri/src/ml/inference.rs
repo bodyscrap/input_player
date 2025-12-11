@@ -8,9 +8,12 @@ use std::path::Path;
 use burn::{
     backend::Wgpu,
     module::Module,
-    record::{BinBytesRecorder, FullPrecisionSettings, Recorder},
+    record::{CompactRecorder, Recorder},
     tensor::Tensor,
 };
+#[cfg(feature = "ml")]
+use burn_wgpu::WgpuDevice;
+use std::io::Write;
 
 #[cfg(feature = "ml")]
 use crate::ml::{IconClassifier, ModelConfig, load_and_normalize_image};
@@ -29,12 +32,21 @@ pub struct InferenceEngine {
 impl InferenceEngine {
     /// モデルを読み込んで推論エンジンを初期化
     pub fn load<P: AsRef<Path>>(model_path: P) -> Result<Self> {
+        Self::load_with_backend(model_path, false) // デフォルトはCPU
+    }
+
+    /// モデルを読み込んで推論エンジンを初期化（バックエンド指定）
+    pub fn load_with_backend<P: AsRef<Path>>(model_path: P, use_gpu: bool) -> Result<Self> {
         // メタデータ読み込み
         let metadata = load_metadata(model_path.as_ref())?;
         let config = InferenceConfig::from_metadata(&metadata);
 
-        // デバイス設定
-        let device = Default::default();
+        // デバイス設定（バックエンドに基づく）
+        let device = if use_gpu {
+            WgpuDevice::DiscreteGpu(0)
+        } else {
+            WgpuDevice::Cpu
+        };
 
         // モデル設定
         let model_config = ModelConfig {
@@ -45,14 +57,33 @@ impl InferenceEngine {
         // モデル初期化
         let model = model_config.init::<Wgpu>(&device);
 
-        // モデルバイナリ読み込み
+        // モデルバイナリ読み込み（.mpk形式）
         let model_binary = load_model_binary(model_path.as_ref())?;
+        
+        println!("モデルバイナリサイズ: {} バイト", model_binary.len());
+        println!("最初の16バイト: {:?}", &model_binary[..16.min(model_binary.len())]);
 
-        // モデルの重みを復元
-        let recorder = BinBytesRecorder::<FullPrecisionSettings>::default();
-        let record = recorder
-            .load(model_binary, &device)
-            .map_err(|e| anyhow::anyhow!("モデル重みの読み込みエラー: {:?}", e))?;
+        // 一時ファイルに書き出してCompactRecorderで読み込む
+        let temp_dir = std::env::temp_dir();
+        let temp_model_path = temp_dir.join(format!("model_{}.mpk", std::process::id()));
+        
+        println!("一時ファイルパス: {:?}", temp_model_path);
+        
+        {
+            let mut temp_file = std::fs::File::create(&temp_model_path)?;
+            temp_file.write_all(&model_binary)?;
+        }
+
+        // モデルの重みを復元（CompactRecorderを使用）
+        let record = CompactRecorder::new()
+            .load(temp_model_path.clone(), &device)
+            .map_err(|e| {
+                println!("CompactRecorder読み込みエラー: {:?}", e);
+                anyhow::anyhow!("モデル重みの読み込みエラー: {:?}", e)
+            })?;
+
+        // 一時ファイルを削除
+        let _ = std::fs::remove_file(temp_model_path);
 
         let model = model.load_record(record);
 
@@ -99,6 +130,60 @@ impl InferenceEngine {
         }
 
         Ok(results)
+    }
+
+    /// RGB画像から直接分類（クラスインデックスを返す）
+    pub fn predict_from_rgb_image(&self, image: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>) -> Result<usize> {
+        use burn::tensor::Tensor;
+        use crate::ml::IMAGE_SIZE;
+        
+        // 画像を48x48にリサイズ
+        let resized = image::imageops::resize(
+            image,
+            IMAGE_SIZE as u32,
+            IMAGE_SIZE as u32,
+            image::imageops::FilterType::Lanczos3
+        );
+        
+        // ImageNetの平均と標準偏差で正規化（学習時と同じ）
+        let mean = [0.485, 0.456, 0.406];
+        let std = [0.229, 0.224, 0.225];
+        
+        let mut normalized = Vec::with_capacity(3 * IMAGE_SIZE * IMAGE_SIZE);
+        
+        // チャネル順: R, G, B
+        for channel in 0..3 {
+            for y in 0..IMAGE_SIZE {
+                for x in 0..IMAGE_SIZE {
+                    let pixel = resized.get_pixel(x as u32, y as u32);
+                    let value = pixel[channel] as f32 / 255.0;
+                    let normalized_value = (value - mean[channel]) / std[channel];
+                    normalized.push(normalized_value);
+                }
+            }
+        }
+        
+        // Tensorに変換 [1, 3, 48, 48]
+        let tensor = Tensor::<Wgpu, 1>::from_floats(normalized.as_slice(), &self.device)
+            .reshape([1, 3, IMAGE_SIZE, IMAGE_SIZE]);
+        
+        // 正規化済みデータを即座に解放
+        drop(normalized);
+        drop(resized);
+        
+        // 推論実行（tensorの所有権が移動）
+        let output = self.model.forward(tensor);
+        
+        // 最大値のインデックスを取得（outputの所有権が移動）
+        let predicted = output.argmax(1);
+        let class_idx = predicted
+            .into_data()
+            .to_vec::<i32>()
+            .map_err(|e| anyhow::anyhow!("推論結果の取得エラー: {:?}", e))?[0] as usize;
+        
+        // tensor, output, predictedは所有権移動により自動解放される
+        
+        Ok(class_idx)
     }
 
     /// InferenceConfigへの参照を取得

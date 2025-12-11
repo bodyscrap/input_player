@@ -276,6 +276,30 @@ h3 {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
+.btn-model-config {
+  padding: 8px 14px;
+  background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
+}
+
+.btn-model-config:hover {
+  background: linear-gradient(135deg, #f5a623 0%, #f18d33 100%);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-model-config:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
 .btn-tile-classify {
   padding: 8px 14px;
   background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);

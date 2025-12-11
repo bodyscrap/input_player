@@ -9,6 +9,8 @@ import SequenceEditor from "./SequenceEditor";
 import VideoAnalyzer from "./VideoAnalyzer";
 import BackendSettings from "./BackendSettings";
 import TrainingDialog from "./TrainingDialog";
+import TileClassificationDialog from "./TileClassificationDialog";
+import ModelConfigDialog from "./ModelConfigDialog";
 import type { SequenceSlot, InputFrame } from "./types";
 
 function App() {
@@ -84,11 +86,28 @@ function App() {
 
   // ML training state
   const [showTrainingDialog, setShowTrainingDialog] = useState(false);
+  const [showTileClassificationDialog, setShowTileClassificationDialog] = useState(false);
   const [showBackendSettings, setShowBackendSettings] = useState(false);
+  const [showModelConfigDialog, setShowModelConfigDialog] = useState(false);
   const [mlBackend, setMlBackend] = useState<"cpu" | "wgpu">(() => {
     const saved = localStorage.getItem("mlBackend");
     return (saved === "cpu" || saved === "wgpu") ? saved : "cpu";
   });
+  
+  // Model configuration state
+  const [classificationModelPath, setClassificationModelPath] = useState<string | null>(() => {
+    return localStorage.getItem("classificationModelPath");
+  });
+  const [classificationModelMetadata, setClassificationModelMetadata] = useState<any>(null);
+  
+  // Save model path to localStorage
+  useEffect(() => {
+    if (classificationModelPath) {
+      localStorage.setItem("classificationModelPath", classificationModelPath);
+    } else {
+      localStorage.removeItem("classificationModelPath");
+    }
+  }, [classificationModelPath]);
 
   // Refs to hold the latest values for use in interval
   const povDirectionRef = useRef(povDirection);
@@ -719,11 +738,16 @@ function App() {
               🧠 モデル学習
             </button>
             <button
-              onClick={() => alert("タイル分類機能は現在開発中です")}
+              onClick={() => setShowModelConfigDialog(true)}
+              className="btn-model-config"
+              title="シーケンス生成用の分類モデルを設定"
+            >
+              ⚙️ モデル設定
+            </button>
+            <button
+              onClick={() => setShowTileClassificationDialog(true)}
               className="btn-tile-classify"
-              title="タイル画像を分類（開発中）"
-              disabled={true}
-              style={{ opacity: 0.5, cursor: "not-allowed" }}
+              title="動画からタイル画像を抽出して分類"
             >
               🔍 タイル分類
             </button>
@@ -1129,6 +1153,8 @@ function App() {
           }
           availableButtons={sequenceButtons}
           targetSlot={loadingSlot}
+          classificationModelPath={classificationModelPath}
+          mlBackend={mlBackend}
         />
       )}
 
@@ -1346,6 +1372,29 @@ function App() {
         <TrainingDialog
           mlBackend={mlBackend}
           onClose={() => setShowTrainingDialog(false)}
+        />
+      )}
+
+      {/* Tile Classification Dialog Modal */}
+      {showTileClassificationDialog && (
+        <TileClassificationDialog
+          mlBackend={mlBackend}
+          onClose={() => setShowTileClassificationDialog(false)}
+        />
+      )}
+
+      {/* Model Config Dialog Modal */}
+      {showModelConfigDialog && (
+        <ModelConfigDialog
+          onClose={() => setShowModelConfigDialog(false)}
+          onModelSet={(modelPath, metadata) => {
+            setClassificationModelPath(modelPath);
+            setClassificationModelMetadata(metadata);
+            console.log("✓ 分類モデルを設定しました:", modelPath);
+          }}
+          currentModelPath={classificationModelPath}
+          buttonMapping={buttonMapping}
+          sequenceButtons={sequenceButtons}
         />
       )}
     </main>

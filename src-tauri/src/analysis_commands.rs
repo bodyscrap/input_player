@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use crate::video::{FrameExtractor, FrameExtractorConfig};
 use crate::model::AppConfig;
+#[cfg(feature = "ml")]
+use crate::model::{load_metadata, ModelMetadata};
 
 // GStreamer用のインポート
 use gstreamer as gst;
@@ -412,4 +414,18 @@ pub fn create_training_directory(
     Ok(format!("{}個のクラスディレクトリを作成しました: {}", 
         created_dirs.len(), 
         created_dirs.join(", ")))
+}
+
+/// モデルメタデータを取得
+#[cfg(feature = "ml")]
+#[tauri::command]
+pub fn get_model_metadata(model_path: String) -> Result<ModelMetadata, String> {
+    load_metadata(&PathBuf::from(model_path))
+        .map_err(|e| format!("メタデータ読み込みエラー: {}", e))
+}
+
+#[cfg(not(feature = "ml"))]
+#[tauri::command]
+pub fn get_model_metadata(_model_path: String) -> Result<String, String> {
+    Err("機械学習機能が有効化されていません".to_string())
 }

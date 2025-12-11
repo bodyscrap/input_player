@@ -44,6 +44,12 @@ pub fn save_model_with_metadata(
         output_path.with_extension("tar.gz")
     };
     
+    // 親ディレクトリが存在しない場合は作成
+    if let Some(parent) = tar_gz_path.parent() {
+        std::fs::create_dir_all(parent)
+            .context(format!("Failed to create parent directory: {:?}", parent))?;
+    }
+    
     let tar_gz_file = File::create(&tar_gz_path)
         .context(format!("Failed to create tar.gz file: {:?}", tar_gz_path))?;
 

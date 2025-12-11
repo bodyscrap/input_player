@@ -319,9 +319,27 @@ where
         record::CompactRecorder,
     };
     
-    // button_labelsの順序でデータセットを構築
-    // クラス順序: dir_1-9(方向キー) -> ユーザーボタン -> others
-    let dataset = TileDataset::from_directory_with_order(&data_dir, &button_labels)?;
+    // button_labelsはユーザーボタンのみ（方向キーとothersは含まない）
+    // 全クラス順序を構築: dir_1-9(方向キー8個) -> ユーザーボタン -> others
+    let mut all_class_labels = vec![
+        "dir_1".to_string(), "dir_2".to_string(), "dir_3".to_string(), "dir_4".to_string(),
+        "dir_6".to_string(), "dir_7".to_string(), "dir_8".to_string(), "dir_9".to_string(),
+    ];
+    
+    // button_labelsから方向キーとothersを除外してユーザーボタンのみを抽出
+    let user_buttons: Vec<String> = button_labels
+        .iter()
+        .filter(|label| !label.starts_with("dir_") && *label != "others")
+        .cloned()
+        .collect();
+    
+    all_class_labels.extend(user_buttons.clone());
+    all_class_labels.push("others".to_string());
+    
+    log_callback(format!("ユーザーボタン: {}", user_buttons.join(", ")));
+    log_callback(format!("全クラス順序 ({}個): {}", all_class_labels.len(), all_class_labels.join(", ")));
+    
+    let dataset = TileDataset::from_directory_with_order(&data_dir, &all_class_labels)?;
     
     let total_samples = dataset.len();
     if total_samples == 0 {
@@ -334,8 +352,8 @@ where
     log_callback(format!("学習データ: {} 枚", dataset_train.len()));
     log_callback(format!("検証データ: {} 枚", dataset_val.len()));
     
-    // モデル設定
-    let num_classes = button_labels.len();
+    // モデル設定（全クラス数を使用）
+    let num_classes = all_class_labels.len();
     let model_config = ModelConfig {
         num_classes,
         dropout: 0.5,
@@ -420,9 +438,10 @@ where
     // 保存された解析範囲設定を読み込む
     let config = AppConfig::load_or_default();
     
-    // メタデータ作成
+    // メタデータ作成（button_labelsにはユーザーボタンのみ、all_class_labelsに全クラス）
     let metadata = ModelMetadata::new(
-        button_labels,
+        user_buttons,  // ユーザーボタンのみ
+        all_class_labels.clone(),  // 全クラス（8方向 + ユーザーボタン + others）
         IMAGE_SIZE as u32,
         IMAGE_SIZE as u32,
         config.button_tile.source_video_width,

@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use tauri::{Emitter, State, Manager};
 
-struct AppState {
+pub struct AppState {
     controller: Arc<Mutex<Controller>>,
     player: Arc<Mutex<Player>>,
     fps: Arc<Mutex<u32>>,
@@ -30,6 +30,7 @@ struct AppState {
     manual_input: Arc<Mutex<InputFrame>>, // 手動入力の現在状態
     app_handle: Arc<Mutex<Option<tauri::AppHandle>>>, // イベント発行用
     button_order: Arc<Mutex<Vec<String>>>, // ボタンマッピングの順序
+    is_training: Arc<Mutex<bool>>, // 学習中フラグ
 }
 
 // Tauri commands
@@ -685,6 +686,7 @@ pub fn run() {
         })),
         app_handle: Arc::new(Mutex::new(None)),
         button_order: Arc::new(Mutex::new(Vec::new())),
+        is_training: Arc::new(Mutex::new(false)),
     };
 
     // FPS設定に基づいて更新するタスクを起動
@@ -811,11 +813,14 @@ pub fn run() {
             analysis_commands::collect_training_data,
             analysis_commands::create_default_classification_folders,
             analysis_commands::create_training_directory,
+            analysis_commands::get_model_metadata,
             // 機械学習関連のコマンド
             ml_commands::extract_input_history,
             ml_commands::train_classification_model,
             ml_commands::classify_video_tiles,
+            ml_commands::extract_and_classify_tiles,
             ml_commands::get_button_labels_from_data_dir,
+            ml_commands::mp4_to_sequence,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

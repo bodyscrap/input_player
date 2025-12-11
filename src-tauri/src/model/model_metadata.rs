@@ -24,6 +24,11 @@ pub struct ModelMetadata {
     /// ボタンラベル（方向キーと"others"は除外）
     /// 例: ["A1", "A2", "B", "W", "Start"]
     pub button_labels: Vec<String>,
+    
+    /// 全クラスラベル（方向8個 + ボタン + others）
+    /// 例: ["dir_1", "dir_2", "dir_3", "dir_4", "dir_6", "dir_7", "dir_8", "dir_9", "A1", "A2", "B", "W", "Start", "others"]
+    #[serde(default)]
+    pub all_class_labels: Vec<String>,
 
     /// 学習データの画像幅（ピクセル）
     /// 学習時に使用した画像ファイルから自動検出される（通常48）
@@ -76,6 +81,7 @@ impl ModelMetadata {
     /// 新しいメタデータを作成
     pub fn new(
         button_labels: Vec<String>,
+        all_class_labels: Vec<String>,
         image_width: u32,
         image_height: u32,
         video_width: u32,
@@ -92,6 +98,7 @@ impl ModelMetadata {
 
         Self {
             button_labels,
+            all_class_labels,
             image_width,
             image_height,
             video_width,

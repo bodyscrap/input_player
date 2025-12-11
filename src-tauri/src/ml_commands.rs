@@ -4,6 +4,8 @@
 use serde::Serialize;
 #[cfg(feature = "ml")]
 use std::path::PathBuf;
+#[cfg(feature = "ml")]
+use tauri::Manager;
 
 #[cfg(feature = "ml")]
 use crate::video::{FrameExtractor, FrameExtractorConfig};
@@ -46,17 +48,39 @@ pub fn extract_input_history(
     
     let button_labels = metadata.button_labels.clone();
     
+    // メタデータの値をデバッグ出力
+    println!("[MP4→CSV] モデルメタデータ:");
+    println!("  tile_x: {}, tile_y: {}", metadata.tile_x, metadata.tile_y);
+    println!("  tile_width: {}, tile_height: {} (領域全体)", metadata.tile_width, metadata.tile_height);
+    println!("  image_width: {}, image_height: {} (個々のタイル)", metadata.image_width, metadata.image_height);
+    println!("  columns_per_row: {}", metadata.columns_per_row);
+    println!("  button_labels: {:?}", metadata.button_labels);
+    
+    // 領域全体のサイズを計算（個々のタイルサイズ × 列数）
+    // 注意: tile_widthは領域全体の幅、image_widthが個々のタイルサイズ
+    let tile_size = metadata.image_width; // 個々のタイルサイズ（48x48）
+    let total_width = tile_size * metadata.columns_per_row;
+    let total_height = tile_size; // 1行のみ
+    
+    println!("[MP4→CSV] 計算された領域:");
+    println!("  tile_size: {}", tile_size);
+    println!("  total_width: {} ({}x{})", total_width, tile_size, metadata.columns_per_row);
+    println!("  total_height: {}", total_height);
+    
     let region = InputIndicatorRegion {
-        x: metadata.tile_x as u32,
-        y: metadata.tile_y as u32,
-        width: metadata.tile_width as u32,
-        height: metadata.tile_height as u32,
+        x: metadata.tile_x,
+        y: metadata.tile_y,
+        width: total_width,
+        height: total_height,
         rows: 1, // 最下行のみ解析
-        cols: metadata.columns_per_row as u32,
+        cols: metadata.columns_per_row,
     };
     
-    // 一時ディレクトリ
-    let temp_dir = PathBuf::from("temp/input_extraction");
+    println!("[MP4→CSV] InputIndicatorRegion: x={}, y={}, width={}, height={}, rows={}, cols={}",
+        region.x, region.y, region.width, region.height, region.rows, region.cols);
+    
+    // 一時ディレクトリ（システムのtempディレクトリを使用してViteの監視範囲外に配置）
+    let temp_dir = std::env::temp_dir().join("input_player_input_extraction");
     fs::create_dir_all(&temp_dir).map_err(|e| format!("一時ディレクトリ作成エラー: {}", e))?;
     let tile_dir = temp_dir.join("tiles");
     fs::create_dir_all(&tile_dir).ok();
@@ -143,7 +167,7 @@ pub fn extract_input_history(
     
     // 最後の状態を書き込み
     if let Some(ref state) = previous_state {
-        let line = state.to_csv_line(duration, &button_labels);
+        let line: String = state.to_csv_line(duration, &button_labels);
         csv_writer.write_record(line.split(','))
             .map_err(|e| format!("CSV書き込みエラー: {}", e))?;
     }
@@ -182,7 +206,8 @@ pub struct TrainingProgress {
 #[cfg(feature = "ml")]
 #[tauri::command]
 pub async fn train_classification_model(
-    _app_handle: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
     data_dir: String,
     output_path: String,
     num_epochs: usize,
@@ -196,6 +221,14 @@ pub async fn train_classification_model(
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tokio::task;
+    
+    // 学習開始フラグを立てる
+    *state.is_training.lock().unwrap() = true;
+    
+    // ウィンドウのクローズを防止
+    if let Some(window) = app_handle.get_webview_window("main") {
+        window.set_closable(false).ok();
+    }
     
     // キャンセルフラグ
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -260,10 +293,16 @@ pub async fn train_classification_model(
     .await
     .map_err(|e| format!("学習スレッドエラー: {}", e))?;
     
+    // 学習終了後、フラグをクリアしてウィンドウを閉じられるようにする
+    *state.is_training.lock().unwrap() = false;
+    if let Some(window) = app_handle.get_webview_window("main") {
+        window.set_closable(true).ok();
+    }
+    
     result.map_err(|e| e.to_string())
 }
 
-/// タイル分類コマンド
+/// タイル分類コマンド（既存タイルの分類）
 #[cfg(feature = "ml")]
 #[tauri::command]
 pub fn classify_video_tiles(
@@ -291,6 +330,234 @@ pub fn classify_video_tiles(
     Ok(ClassificationResult {
         summary,
         message: "タイル分類が完了しました".to_string(),
+    })
+}
+
+/// 動画からタイルを抽出して分類するコマンド（進捗付き）
+#[cfg(feature = "ml")]
+#[tauri::command]
+pub fn extract_and_classify_tiles(
+    video_path: String,
+    model_path: String,
+    output_dir: String,
+    frame_skip: u32,
+    use_gpu: bool,
+    on_progress: tauri::ipc::Channel<ExtractionProgress>,
+) -> Result<ClassificationResult, String> {
+    use crate::model::load_metadata;
+    use crate::ml::InferenceEngine;
+    use std::fs;
+    use std::collections::HashMap;
+    use gstreamer as gst;
+    use gstreamer::prelude::*;
+    use gstreamer_app as gst_app;
+    use gstreamer_video as gst_video;
+    use image::{ImageBuffer, Rgb};
+    
+    // モデル読み込み（バックエンド設定を使用）
+    let engine = InferenceEngine::load_with_backend(&PathBuf::from(&model_path), use_gpu)
+        .map_err(|e| format!("モデル読み込みエラー: {}", e))?;
+    
+    // メタデータ取得
+    let metadata = load_metadata(&PathBuf::from(&model_path))
+        .map_err(|e| format!("メタデータ読み込みエラー: {}", e))?;
+    
+    // GStreamer初期化
+    gst::init().map_err(|e| format!("GStreamer初期化失敗: {}", e))?;
+    
+    // 出力ディレクトリ作成（動画名のフォルダ）
+    let video_pathbuf = PathBuf::from(&video_path);
+    let video_stem = video_pathbuf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("動画ファイル名の取得エラー")?;
+    let video_output_dir = PathBuf::from(&output_dir).join(video_stem);
+    
+    // クラス毎のディレクトリ作成（all_class_labelsがあればそれを使用）
+    let class_labels = if !metadata.all_class_labels.is_empty() {
+        &metadata.all_class_labels
+    } else {
+        &metadata.button_labels
+    };
+    
+    for class_name in class_labels {
+        let class_dir = video_output_dir.join(class_name);
+        fs::create_dir_all(&class_dir)
+            .map_err(|e| format!("ディレクトリ作成エラー: {}", e))?;
+    }
+    
+    // パイプラインを構築
+    let pipeline_str = format!(
+        "filesrc location=\"{}\" ! decodebin ! videoconvert ! video/x-raw,format=RGB ! appsink name=sink",
+        video_path.replace("\\", "/")
+    );
+    
+    let pipeline = gst::parse::launch(&pipeline_str)
+        .map_err(|e| format!("パイプライン構築失敗: {}", e))?;
+    let pipeline = pipeline
+        .dynamic_cast::<gst::Pipeline>()
+        .map_err(|_| "Pipeline型への変換失敗")?;
+    
+    // AppSinkを取得
+    let appsink = pipeline
+        .by_name("sink")
+        .ok_or("AppSinkが見つかりません")?
+        .dynamic_cast::<gst_app::AppSink>()
+        .map_err(|_| "AppSink型への変換失敗")?;
+    
+    // パイプラインを開始
+    pipeline
+        .set_state(gst::State::Playing)
+        .map_err(|e| format!("パイプライン開始失敗: {:?}", e))?;
+    
+    let mut frame_count = 0u32;
+    let mut tile_count: HashMap<String, usize> = HashMap::new();
+    let mut total_tiles = 0usize;
+    
+    // メタデータから動画サイズをチェック
+    let expected_width = metadata.video_width as u32;
+    let expected_height = metadata.video_height as u32;
+    let mut size_checked = false;
+    
+    // フレームを処理
+    loop {
+        let sample = match appsink.pull_sample() {
+            Ok(sample) => sample,
+            Err(_) => break, // EOSまたはエラーで終了
+        };
+        
+        frame_count += 1;
+        
+        // 間引き処理
+        let frame_interval = frame_skip + 1;
+        if (frame_count - 1) % frame_interval != 0 {
+            continue;
+        }
+        
+        let buffer = sample.buffer().ok_or("バッファ取得失敗")?;
+        let caps = sample.caps().ok_or("Caps取得失敗")?;
+        
+        let video_info = gst_video::VideoInfo::from_caps(caps)
+            .map_err(|e| format!("VideoInfo取得失敗: {:?}", e))?;
+        
+        let width = video_info.width() as u32;
+        let height = video_info.height() as u32;
+        
+        // 動画サイズチェック（初回のみ）
+        if !size_checked {
+            if width != expected_width || height != expected_height {
+                pipeline.set_state(gst::State::Null).ok();
+                return Err(format!(
+                    "動画サイズが不一致: 動画={}x{}, モデル={}x{}",
+                    width, height, expected_width, expected_height
+                ));
+            }
+            size_checked = true;
+        }
+        
+        // 進捗報告（30フレーム毎）
+        if frame_count % 30 == 0 {
+            on_progress.send(ExtractionProgress {
+                current_frame: frame_count,
+                total_frames: 0, // 総フレーム数は不明
+                message: format!("フレーム {} 処理中 ({} タイル分類済み)...", frame_count, total_tiles),
+            }).ok();
+        }
+        
+        // バッファをマップ
+        let map = buffer.map_readable()
+            .map_err(|_| "バッファマップ失敗")?;
+        let data = map.as_slice();
+        
+        // 各タイルを切り出して分類
+        for row in 0..1 {  // 1行のみ（ボタンタイル）
+            for col in 0..metadata.columns_per_row {
+                let tile_x = metadata.tile_x as u32 + (col as u32 * metadata.tile_width as u32);
+                let tile_y = metadata.tile_y as u32 + (row as u32 * metadata.tile_height as u32);
+                
+                // 範囲チェック
+                if tile_x + metadata.tile_width as u32 > width || tile_y + metadata.tile_height as u32 > height {
+                    continue;
+                }
+                
+                // タイル画像を作成
+                let mut tile_img = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
+                    metadata.tile_width as u32,
+                    metadata.tile_height as u32
+                );
+                
+                for ty in 0..metadata.tile_height as u32 {
+                    for tx in 0..metadata.tile_width as u32 {
+                        let src_x = tile_x + tx;
+                        let src_y = tile_y + ty;
+                        let src_idx = ((src_y * width + src_x) * 3) as usize;
+                        
+                        if src_idx + 2 < data.len() {
+                            tile_img.put_pixel(
+                                tx,
+                                ty,
+                                Rgb([data[src_idx], data[src_idx + 1], data[src_idx + 2]])
+                            );
+                        }
+                    }
+                }
+                
+                // 分類実行
+                let class_idx = engine.predict_from_rgb_image(&tile_img)
+                    .map_err(|e| format!("分類エラー: {}", e))?;
+                
+                // 全クラスラベルから取得（all_class_labelsが空の場合はbutton_labelsにフォールバック）
+                let class_labels = if !metadata.all_class_labels.is_empty() {
+                    &metadata.all_class_labels
+                } else {
+                    &metadata.button_labels
+                };
+                
+                let class_name = class_labels.get(class_idx)
+                    .ok_or(format!("クラスインデックス {} が範囲外（クラス数: {}）", class_idx, class_labels.len()))?;
+                
+                // 保存先パス生成
+                let count = tile_count.get(class_name).copied().unwrap_or(0);
+                let tile_filename = format!("frame_{:06}_tile_{:04}.png", frame_count, count);
+                let tile_path = video_output_dir.join(class_name).join(&tile_filename);
+                
+                // タイル保存
+                tile_img.save(&tile_path)
+                    .map_err(|e| format!("タイル保存エラー: {}", e))?;
+                
+                // タイル画像を明示的に解放
+                drop(tile_img);
+                
+                // カウント更新
+                *tile_count.entry(class_name.clone()).or_insert(0) += 1;
+                total_tiles += 1;
+            }
+        }
+    }
+    
+    // パイプラインを停止
+    pipeline.set_state(gst::State::Null)
+        .map_err(|e| format!("パイプライン停止失敗: {:?}", e))?;
+    
+    // 最終進捗報告
+    on_progress.send(ExtractionProgress {
+        current_frame: frame_count,
+        total_frames: frame_count,
+        message: "分類完了".to_string(),
+    }).ok();
+    
+    // 結果サマリー作成
+    let mut summary: Vec<ClassSummary> = tile_count.iter()
+        .map(|(class_name, count)| ClassSummary {
+            class_name: class_name.clone(),
+            count: *count,
+        })
+        .collect();
+    summary.sort_by(|a, b| a.class_name.cmp(&b.class_name));
+    
+    Ok(ClassificationResult {
+        summary,
+        message: format!("タイル分類完了: {} フレーム処理、{} タイル分類", frame_count, total_tiles),
     })
 }
 
@@ -427,5 +694,240 @@ pub fn get_button_labels_from_data_dir(data_dir: String) -> Result<Vec<String>, 
 #[cfg(not(feature = "ml"))]
 #[tauri::command]
 pub fn get_button_labels_from_data_dir(_data_dir: String) -> Result<Vec<String>, String> {
+    Err("機械学習機能が有効化されていません".to_string())
+}
+
+/// MP4動画からシーケンスCSVを生成（進捗通知付き）
+/// 
+/// extract_input_historyと同じ処理だが、出力パスを自動生成
+#[cfg(feature = "ml")]
+#[tauri::command]
+pub async fn mp4_to_sequence(
+    video_path: String,
+    model_path: String,
+    backend: String,
+    on_progress: tauri::ipc::Channel<ExtractionProgress>,
+) -> Result<String, String> {
+    use std::path::Path;
+    
+    // 出力CSVパスを生成（動画と同じディレクトリに_input_history.csvを追加）
+    let video_path_obj = Path::new(&video_path);
+    let stem = video_path_obj.file_stem()
+        .ok_or_else(|| "動画ファイル名が無効です".to_string())?
+        .to_str()
+        .ok_or_else(|| "動画ファイル名のパース失敗".to_string())?;
+    
+    let parent = video_path_obj.parent()
+        .ok_or_else(|| "親ディレクトリが見つかりません".to_string())?;
+    
+    let output_csv_path = parent.join(format!("{}_input_history.csv", stem));
+    let output_csv_str = output_csv_path.to_str()
+        .ok_or_else(|| "出力パスの変換失敗".to_string())?
+        .to_string();
+    
+    println!("[MP4→CSV] 開始: {}", video_path);
+    println!("[MP4→CSV] 出力: {}", output_csv_str);
+    println!("[MP4→CSV] モデル: {}", model_path);
+    println!("[MP4→CSV] バックエンド: {}", backend);
+    
+    // 動画情報を取得して総フレーム数を計算
+    use crate::video::FrameExtractor;
+    let video_info = FrameExtractor::get_video_info(&video_path)
+        .map_err(|e| format!("動画情報取得エラー: {}", e))?;
+    let estimated_total_frames = (video_info.duration_sec * video_info.fps) as u32;
+    
+    println!("[MP4→CSV] 推定総フレーム数: {} ({}秒 × {}fps)", 
+        estimated_total_frames, video_info.duration_sec, video_info.fps);
+    
+    // 初期進捗を送信
+    on_progress.send(ExtractionProgress {
+        current_frame: 0,
+        total_frames: estimated_total_frames,
+        message: "推論エンジンを初期化中...".to_string(),
+    }).ok();
+    
+    // バックエンド設定
+    let use_gpu = backend == "wgpu";
+    
+    // 推論エンジンを初期化（バックエンド指定）
+    let engine = InferenceEngine::load_with_backend(&PathBuf::from(&model_path), use_gpu)
+        .map_err(|e| format!("推論エンジンの初期化エラー: {}", e))?;
+    
+    use std::fs;
+    
+    // メタデータから領域設定を取得
+    let metadata = load_metadata(&PathBuf::from(&model_path))
+        .map_err(|e| format!("メタデータ読み込みエラー: {}", e))?;
+    
+    let button_labels = metadata.button_labels.clone();
+    
+    // メタデータの値をデバッグ出力
+    println!("[MP4→CSV] モデルメタデータ:");
+    println!("  tile_x: {}, tile_y: {}", metadata.tile_x, metadata.tile_y);
+    println!("  tile_width: {}, tile_height: {} (領域全体)", metadata.tile_width, metadata.tile_height);
+    println!("  image_width: {}, image_height: {} (個々のタイル)", metadata.image_width, metadata.image_height);
+    println!("  columns_per_row: {}", metadata.columns_per_row);
+    println!("  button_labels: {:?}", metadata.button_labels);
+    
+    // 領域全体のサイズを計算（個々のタイルサイズ × 列数）
+    // 注意: tile_widthは領域全体の幅、image_widthが個々のタイルサイズ
+    let tile_size = metadata.image_width; // 個々のタイルサイズ（48x48）
+    let total_width = tile_size * metadata.columns_per_row;
+    let total_height = tile_size; // 1行のみ
+    
+    println!("[MP4→CSV] 計算された領域:");
+    println!("  tile_size: {}", tile_size);
+    println!("  total_width: {} ({}x{})", total_width, tile_size, metadata.columns_per_row);
+    println!("  total_height: {}", total_height);
+    
+    let region = InputIndicatorRegion {
+        x: metadata.tile_x,
+        y: metadata.tile_y,
+        width: total_width,
+        height: total_height,
+        rows: 1,
+        cols: metadata.columns_per_row,
+    };
+    
+    println!("[MP4→CSV] InputIndicatorRegion: x={}, y={}, width={}, height={}, rows={}, cols={}",
+        region.x, region.y, region.width, region.height, region.rows, region.cols);
+    
+    // 一時ディレクトリ（システムのtempディレクトリを使用してViteの監視範囲外に配置）
+    let temp_dir = std::env::temp_dir().join("input_player_mp4_conversion");
+    fs::create_dir_all(&temp_dir).map_err(|e| format!("一時ディレクトリ作成エラー: {}", e))?;
+    let tile_dir = temp_dir.join("tiles");
+    fs::create_dir_all(&tile_dir).ok();
+    
+    // CSV出力準備
+    let mut csv_writer = csv::Writer::from_path(&output_csv_path)
+        .map_err(|e| format!("CSV作成エラー: {}", e))?;
+    
+    // ヘッダー行を書き込み
+    let mut header = vec!["duration".to_string(), "direction".to_string()];
+    header.extend(button_labels.clone());
+    csv_writer.write_record(&header)
+        .map_err(|e| format!("CSVヘッダー書き込みエラー: {}", e))?;
+    
+    // 入力状態の履歴
+    let mut previous_state: Option<InputState> = None;
+    let mut duration = 0u32;
+    let mut total_frames = 0u32;
+    let mut sequence_steps = 0u32; // シーケンスステップ数
+    
+    // フレーム抽出設定
+    let frame_config = FrameExtractorConfig {
+        frame_interval: 1, // 全フレーム
+        output_dir: temp_dir.clone(),
+        image_format: "png".to_string(),
+        jpeg_quality: 95,
+    };
+    
+    let extractor = FrameExtractor::new(frame_config);
+    
+    println!("[MP4→CSV] フレーム処理開始");
+    
+    // 初期進捗を送信
+    on_progress.send(ExtractionProgress {
+        current_frame: 0,
+        total_frames: estimated_total_frames,
+        message: "フレーム処理を開始...".to_string(),
+    }).ok();
+    
+    // 同期処理: フレーム抽出とタイル推論を同じスレッド内で実行
+    extractor.process_frames_sync(&video_path, |frame_img, frame_num| {
+        total_frames = frame_num + 1;
+        
+        // 30フレームごとに進捗通知
+        if frame_num % 30 == 0 {
+            on_progress.send(ExtractionProgress {
+                current_frame: frame_num,
+                total_frames: estimated_total_frames,
+                message: format!("{}フレーム処理中... ({}%)", 
+                    frame_num, 
+                    (frame_num as f32 / estimated_total_frames as f32 * 100.0) as u32),
+            }).ok();
+        }
+        
+        // フレームから入力インジケータ領域のタイルを抽出
+        let tiles = crate::analyzer::extract_tiles_from_image(frame_img, &region)
+            .map_err(|e| anyhow::anyhow!("タイル抽出エラー: {}", e))?;
+        
+        // 各タイルを推論
+        let mut current_state = InputState::new();
+        
+        for (i, tile) in tiles.into_iter().enumerate() {
+            let tile_path = tile_dir.join(format!("tile_{}_{}.png", frame_num, i));
+            tile.save(&tile_path)
+                .map_err(|e| anyhow::anyhow!("タイル保存エラー: {}", e))?;
+            
+            // 推論実行
+            let class_name = engine.classify_image(&tile_path)
+                .map_err(|e| anyhow::anyhow!("推論エラー: {}", e))?;
+            
+            // 入力状態に反映
+            crate::analyzer::update_input_state(&mut current_state, &class_name);
+            
+            // タイルを削除
+            fs::remove_file(&tile_path).ok();
+        }
+        
+        // 状態が変化したらCSVに書き込み
+        if let Some(ref prev) = previous_state {
+            if prev != &current_state {
+                let line = prev.to_csv_line(duration, &button_labels);
+                csv_writer.write_record(line.split(','))
+                    .map_err(|e| anyhow::anyhow!("CSV書き込みエラー: {}", e))?;
+                sequence_steps += 1;
+                println!("[MP4→CSV] シーケンス#{}: duration={}F ({:.2}秒)", 
+                    sequence_steps, duration, duration as f32 / 60.0);
+                duration = 1;
+            } else {
+                duration += 1;
+            }
+        } else {
+            duration = 1;
+        }
+        
+        previous_state = Some(current_state);
+        
+        Ok(())
+    }).map_err(|e| format!("フレーム処理エラー: {}", e))?;
+    
+    // 最後の状態を書き込み
+    if let Some(ref state) = previous_state {
+        let line: String = state.to_csv_line(duration, &button_labels);
+        csv_writer.write_record(line.split(','))
+            .map_err(|e| format!("CSV書き込みエラー: {}", e))?;
+        sequence_steps += 1;
+        println!("[MP4→CSV] シーケンス#{}: duration={}F ({:.2}秒) - 最終ステップ", 
+            sequence_steps, duration, duration as f32 / 60.0);
+    }
+    
+    csv_writer.flush()
+        .map_err(|e| format!("CSVフラッシュエラー: {}", e))?;
+    
+    // 一時ディレクトリを削除
+    fs::remove_dir_all(&temp_dir).ok();
+    
+    println!("[MP4→CSV] 完了: {}フレーム → {}シーケンスステップ (平均: {:.1}F/ステップ)", 
+        total_frames, sequence_steps, total_frames as f32 / sequence_steps.max(1) as f32);
+    
+    // 完了通知
+    on_progress.send(ExtractionProgress {
+        current_frame: total_frames,
+        total_frames: total_frames,
+        message: format!("完了: {}シーケンスステップを生成", sequence_steps),
+    }).ok();
+    
+    Ok(output_csv_str)
+}
+
+#[cfg(not(feature = "ml"))]
+#[tauri::command]
+pub fn mp4_to_sequence(
+    _video_path: String,
+    _model_path: String,
+    _backend: String,
+) -> Result<String, String> {
     Err("機械学習機能が有効化されていません".to_string())
 }
