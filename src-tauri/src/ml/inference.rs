@@ -8,7 +8,7 @@ use std::path::Path;
 use burn::{
     backend::Wgpu,
     module::Module,
-    record::{CompactRecorder, Recorder},
+    record::{DefaultFileRecorder, FullPrecisionSettings, Recorder},
     tensor::Tensor,
 };
 #[cfg(feature = "ml")]
@@ -52,6 +52,7 @@ impl InferenceEngine {
         let model_config = ModelConfig {
             num_classes: config.num_total_classes(),
             dropout: 0.0, // 推論時はドロップアウトなし
+            image_size: metadata.image_width as usize,  // メタデータから取得
         };
 
         // モデル初期化
@@ -63,7 +64,7 @@ impl InferenceEngine {
         println!("モデルバイナリサイズ: {} バイト", model_binary.len());
         println!("最初の16バイト: {:?}", &model_binary[..16.min(model_binary.len())]);
 
-        // 一時ファイルに書き出してCompactRecorderで読み込む
+        // 一時ファイルに書き出してDefaultFileRecorder(FullPrecision)で読み込む
         let temp_dir = std::env::temp_dir();
         let temp_model_path = temp_dir.join(format!("model_{}.mpk", std::process::id()));
         
@@ -74,11 +75,11 @@ impl InferenceEngine {
             temp_file.write_all(&model_binary)?;
         }
 
-        // モデルの重みを復元（CompactRecorderを使用）
-        let record = CompactRecorder::new()
+        // モデルの重みを復元（DefaultFileRecorder<FullPrecisionSettings>を使用 - 学習時と同じ）
+        let record = DefaultFileRecorder::<FullPrecisionSettings>::new()
             .load(temp_model_path.clone(), &device)
             .map_err(|e| {
-                println!("CompactRecorder読み込みエラー: {:?}", e);
+                println!("DefaultFileRecorder読み込みエラー: {:?}", e);
                 anyhow::anyhow!("モデル重みの読み込みエラー: {:?}", e)
             })?;
 
@@ -99,9 +100,10 @@ impl InferenceEngine {
         // 画像読み込み・正規化
         let image_data = load_and_normalize_image(image_path.as_ref())?;
 
-        // Tensorに変換 [1, 3, 48, 48]
+        let img_size = self.config.model_input_size as usize;
+        // Tensorに変換 [1, 3, img_size, img_size]
         let tensor = Tensor::<Wgpu, 1>::from_floats(image_data.as_slice(), &self.device)
-            .reshape([1, 3, 48, 48]);
+            .reshape([1, 3, img_size, img_size]);
 
         // 推論実行
         let output = self.model.forward(tensor);
@@ -135,13 +137,13 @@ impl InferenceEngine {
     /// RGB画像から直接分類（クラスインデックスを返す）
     pub fn predict_from_rgb_image(&self, image: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>) -> Result<usize> {
         use burn::tensor::Tensor;
-        use crate::ml::IMAGE_SIZE;
         
-        // 画像を48x48にリサイズ
+        let img_size = self.config.model_input_size;
+        // 画像をメタデータで指定されたサイズにリサイズ
         let resized = image::imageops::resize(
             image,
-            IMAGE_SIZE as u32,
-            IMAGE_SIZE as u32,
+            img_size,
+            img_size,
             image::imageops::FilterType::Lanczos3
         );
         
@@ -149,12 +151,13 @@ impl InferenceEngine {
         let mean = [0.485, 0.456, 0.406];
         let std = [0.229, 0.224, 0.225];
         
-        let mut normalized = Vec::with_capacity(3 * IMAGE_SIZE * IMAGE_SIZE);
+        let img_size_usize = img_size as usize;
+        let mut normalized = Vec::with_capacity(3 * img_size_usize * img_size_usize);
         
         // チャネル順: R, G, B
         for channel in 0..3 {
-            for y in 0..IMAGE_SIZE {
-                for x in 0..IMAGE_SIZE {
+            for y in 0..img_size_usize {
+                for x in 0..img_size_usize {
                     let pixel = resized.get_pixel(x as u32, y as u32);
                     let value = pixel[channel] as f32 / 255.0;
                     let normalized_value = (value - mean[channel]) / std[channel];
@@ -163,9 +166,9 @@ impl InferenceEngine {
             }
         }
         
-        // Tensorに変換 [1, 3, 48, 48]
+        // Tensorに変換 [1, 3, img_size, img_size]
         let tensor = Tensor::<Wgpu, 1>::from_floats(normalized.as_slice(), &self.device)
-            .reshape([1, 3, IMAGE_SIZE, IMAGE_SIZE]);
+            .reshape([1, 3, img_size_usize, img_size_usize]);
         
         // 正規化済みデータを即座に解放
         drop(normalized);

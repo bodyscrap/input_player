@@ -52,6 +52,7 @@ pub struct SequenceEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ControllerType {
     Xbox,
     DualShock4,

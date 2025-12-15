@@ -104,6 +104,11 @@ function TileClassificationDialog({ mlBackend, onClose }: TileClassificationDial
           console.log("all_class_labels:", meta.all_class_labels);
           setMetadata(meta);
           setErrorMessage("");
+          
+          // ボタンラベル情報をApp.tsxに渡してマッピングを設定
+          if (meta.button_labels && meta.button_labels.length > 0) {
+            await applyButtonMappingFromModel(meta.button_labels);
+          }
         } catch (error) {
           console.error("メタデータ読み込みエラー:", error);
           setErrorMessage(`メタデータ読み込みエラー: ${error}`);
@@ -112,6 +117,29 @@ function TileClassificationDialog({ mlBackend, onClose }: TileClassificationDial
       }
     } catch (error) {
       console.error("モデル選択エラー:", error);
+    }
+  };
+
+  // モデルのボタンラベルからマッピングを生成
+  const applyButtonMappingFromModel = async (buttonLabels: string[]) => {
+    try {
+      console.log("[ボタンマッピング] モデルから設定:", buttonLabels);
+      
+      // デフォルトマッピング: ボタン名 -> ボタン名
+      const mapping: Record<string, string> = {};
+      buttonLabels.forEach((label) => {
+        mapping[label] = label;
+      });
+      
+      // ボタンマッピングファイルを保存
+      await invoke("save_button_mapping", {
+        mapping,
+        filePath: "config/button_mapping.json",
+      });
+      
+      console.log("[ボタンマッピング] 設定完了:", mapping);
+    } catch (error) {
+      console.error("ボタンマッピング設定エラー:", error);
     }
   };
 
@@ -149,16 +177,40 @@ function TileClassificationDialog({ mlBackend, onClose }: TileClassificationDial
 
             setConfig({ ...config, videoPath });
             setErrorMessage("");
+            
+            // 動画名ベースの出力ディレクトリを生成
+            await updateOutputDirFromVideo(videoPath);
           } catch (error) {
             console.error("動画情報取得エラー:", error);
             setErrorMessage(`動画情報取得エラー: ${error}`);
           }
         } else {
           setConfig({ ...config, videoPath });
+          await updateOutputDirFromVideo(videoPath);
         }
       }
     } catch (error) {
       console.error("動画選択エラー:", error);
+    }
+  };
+
+  // 動画名から出力ディレクトリを更新
+  const updateOutputDirFromVideo = async (videoPath: string) => {
+    try {
+      const savedOutputDir = localStorage.getItem("classificationOutputDir");
+      const baseDir = savedOutputDir || await invoke<string>("get_app_dir");
+      
+      // 動画ファイル名（拡張子なし）を取得
+      const videoFileName = await path.basename(videoPath);
+      const videoBaseName = videoFileName.replace(/\.[^.]+$/, ""); // 拡張子を削除
+      
+      // baseDir直下に動画名のディレクトリが作成される
+      // （バックエンドが自動的に作成するので、ここでは親ディレクトリのみ設定）
+      setConfig((prev) => ({ ...prev, outputDir: baseDir }));
+      console.log("出力先ディレクトリ（親）を設定:", baseDir);
+      console.log("実際の出力先:", `${baseDir}/${videoBaseName}/`);
+    } catch (error) {
+      console.error("出力ディレクトリ設定エラー:", error);
     }
   };
 

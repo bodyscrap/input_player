@@ -16,6 +16,36 @@ use crate::model::load_metadata;
 #[cfg(feature = "ml")]
 use crate::ml::InferenceEngine;
 
+/// 非圧縮PNGとして画像を保存するヘルパー関数
+#[cfg(feature = "ml")]
+fn save_as_uncompressed_png<P: AsRef<std::path::Path>>(
+    img: &image::DynamicImage,
+    path: P,
+) -> Result<(), anyhow::Error> {
+    use image::codecs::png::{PngEncoder, CompressionType, FilterType};
+    use image::ImageEncoder;
+    use std::fs::File;
+    use std::io::BufWriter;
+
+    let file = File::create(path)?;
+    let buf_writer = BufWriter::new(file);
+    
+    let encoder = PngEncoder::new_with_quality(
+        buf_writer,
+        CompressionType::Fast,  // 最小圧縮（実質無圧縮に近い）
+        FilterType::NoFilter,   // フィルタなし
+    );
+    
+    encoder.write_image(
+        img.as_bytes(),
+        img.width(),
+        img.height(),
+        img.color().into(),
+    )?;
+    
+    Ok(())
+}
+
 /// 進捗情報のペイロード
 #[derive(Clone, serde::Serialize)]
 pub struct ExtractionProgress {
@@ -132,7 +162,8 @@ pub fn extract_input_history(
         
         for (i, tile) in tiles.into_iter().enumerate() {
             let tile_path = tile_dir.join(format!("tile_{}_{}.png", frame_num, i));
-            tile.save(&tile_path)
+            let dynamic_img = image::DynamicImage::ImageRgb8(tile);
+            save_as_uncompressed_png(&dynamic_img, &tile_path)
                 .map_err(|e| anyhow::anyhow!("タイル保存エラー: {}", e))?;
             
             // 推論実行（engineは同じスレッド内なのでSend不要）
@@ -516,17 +547,20 @@ pub fn extract_and_classify_tiles(
                 let class_name = class_labels.get(class_idx)
                     .ok_or(format!("クラスインデックス {} が範囲外（クラス数: {}）", class_idx, class_labels.len()))?;
                 
-                // 保存先パス生成
-                let count = tile_count.get(class_name).copied().unwrap_or(0);
-                let tile_filename = format!("frame_{:06}_tile_{:04}.png", frame_count, count);
+                // タイルIDは左から右へ順に1から始まる
+                let tile_id = col + 1;
+                
+                // ファイル名形式: {動画名}_frame={フレーム番号}_tile={タイルID}.png
+                let tile_filename = format!("{}_frame={}_tile={}.png", video_stem, frame_count, tile_id);
                 let tile_path = video_output_dir.join(class_name).join(&tile_filename);
                 
-                // タイル保存
-                tile_img.save(&tile_path)
+                // タイル保存（非圧縮PNG）
+                let dynamic_img = image::DynamicImage::ImageRgb8(tile_img);
+                save_as_uncompressed_png(&dynamic_img, &tile_path)
                     .map_err(|e| format!("タイル保存エラー: {}", e))?;
                 
                 // タイル画像を明示的に解放
-                drop(tile_img);
+                drop(dynamic_img);
                 
                 // カウント更新
                 *tile_count.entry(class_name.clone()).or_insert(0) += 1;
@@ -546,14 +580,21 @@ pub fn extract_and_classify_tiles(
         message: "分類完了".to_string(),
     }).ok();
     
-    // 結果サマリー作成
-    let mut summary: Vec<ClassSummary> = tile_count.iter()
-        .map(|(class_name, count)| ClassSummary {
+    // 結果サマリー作成（メタデータの順序でソート、0枚のクラスも含む）
+    // 正しい順序: dir_1, dir_2, dir_3, dir_4, dir_6, dir_7, dir_8, dir_9, <ボタンリスト>, others
+    let class_labels = if !metadata.all_class_labels.is_empty() {
+        &metadata.all_class_labels
+    } else {
+        // フォールバック: メタデータにall_class_labelsがない場合
+        &metadata.button_labels
+    };
+    
+    let summary: Vec<ClassSummary> = class_labels.iter()
+        .map(|class_name| ClassSummary {
             class_name: class_name.clone(),
-            count: *count,
+            count: *tile_count.get(class_name).unwrap_or(&0),
         })
         .collect();
-    summary.sort_by(|a, b| a.class_name.cmp(&b.class_name));
     
     Ok(ClassificationResult {
         summary,
@@ -915,7 +956,8 @@ pub async fn mp4_to_sequence(
         
         for (i, tile) in tiles.into_iter().enumerate() {
             let tile_path = tile_dir.join(format!("tile_{}_{}.png", frame_num, i));
-            tile.save(&tile_path)
+            let dynamic_img = image::DynamicImage::ImageRgb8(tile);
+            save_as_uncompressed_png(&dynamic_img, &tile_path)
                 .map_err(|e| anyhow::anyhow!("タイル保存エラー: {}", e))?;
             
             // 推論実行
@@ -987,5 +1029,106 @@ pub fn mp4_to_sequence(
     _model_path: String,
     _backend: String,
 ) -> Result<String, String> {
+    Err("機械学習機能が有効化されていません".to_string())
+}
+
+/// マッピング設定と学習データディレクトリのボタンの整合性をチェック
+#[cfg(feature = "ml")]
+#[tauri::command]
+pub fn validate_mapping_and_training_data(
+    mapping_path: String,
+    data_dir: String,
+) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+    use crate::types::ButtonMapping;
+    
+    // 1. マッピング設定を読み込む
+    let mapping_content = fs::read_to_string(&mapping_path)
+        .map_err(|e| format!("マッピング設定の読み込みエラー: {}", e))?;
+    
+    let mapping: ButtonMapping = serde_json::from_str(&mapping_content)
+        .map_err(|e| format!("マッピング設定のパースエラー: {}", e))?;
+    
+    // use_in_sequence = true のボタンのみを抽出
+    let mut mapping_buttons: Vec<String> = mapping
+        .mapping
+        .iter()
+        .filter(|btn| btn.use_in_sequence)
+        .map(|btn| btn.user_button.clone())
+        .collect();
+    mapping_buttons.sort();
+    
+    // 2. 学習データディレクトリのボタンを取得
+    let data_path = Path::new(&data_dir);
+    let mut data_buttons = Vec::new();
+    
+    if let Ok(entries) = fs::read_dir(data_path) {
+        for entry in entries.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_dir() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        let name_str = name.to_string();
+                        // dir_1-9とothersは除外
+                        if !name_str.starts_with("dir_") && name_str != "others" {
+                            data_buttons.push(name_str);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    data_buttons.sort();
+    
+    // 3. 差分をチェック
+    let mapping_set: std::collections::HashSet<_> = mapping_buttons.iter().collect();
+    let data_set: std::collections::HashSet<_> = data_buttons.iter().collect();
+    
+    // マッピングにあるが学習データにないボタン
+    let missing_in_data: Vec<_> = mapping_buttons
+        .iter()
+        .filter(|btn| !data_set.contains(btn))
+        .cloned()
+        .collect();
+    
+    // 学習データにあるがマッピングにないボタン
+    let missing_in_mapping: Vec<_> = data_buttons
+        .iter()
+        .filter(|btn| !mapping_set.contains(btn))
+        .cloned()
+        .collect();
+    
+    // エラーメッセージを構築
+    if !missing_in_data.is_empty() || !missing_in_mapping.is_empty() {
+        let mut error_msg = String::from("警告: マッピング設定と学習データディレクトリに不一致があります\n\n");
+        
+        if !missing_in_data.is_empty() {
+            error_msg.push_str(&format!(
+                "⚠ マッピング設定にあるが、学習データディレクトリに存在しないボタン:\n  {}\n\n",
+                missing_in_data.join(", ")
+            ));
+        }
+        
+        if !missing_in_mapping.is_empty() {
+            error_msg.push_str(&format!(
+                "⚠ 学習データディレクトリにあるが、マッピング設定に存在しないボタン:\n  {}\n\n",
+                missing_in_mapping.join(", ")
+            ));
+        }
+        
+        error_msg.push_str("推奨: マッピング設定と学習データディレクトリのボタンを一致させてください。");
+        
+        return Err(error_msg);
+    }
+    
+    Ok(())
+}
+
+#[cfg(not(feature = "ml"))]
+#[tauri::command]
+pub fn validate_mapping_and_training_data(
+    _mapping_path: String,
+    _data_dir: String,
+) -> Result<(), String> {
     Err("機械学習機能が有効化されていません".to_string())
 }

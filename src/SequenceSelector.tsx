@@ -64,7 +64,7 @@ function SequenceSelector({
 
           <div className="path-section">
             <label>
-              入力履歴CSVファイル:
+              シーケンスファイル:
               <input
                 type="text"
                 value={csvPath}

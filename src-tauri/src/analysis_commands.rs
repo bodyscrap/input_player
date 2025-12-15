@@ -8,6 +8,35 @@ use crate::model::AppConfig;
 #[cfg(feature = "ml")]
 use crate::model::{load_metadata, ModelMetadata};
 
+/// 非圧縮PNGとして画像を保存するヘルパー関数
+fn save_as_uncompressed_png<P: AsRef<std::path::Path>>(
+    img: &image::DynamicImage,
+    path: P,
+) -> Result<(), image::ImageError> {
+    use image::codecs::png::{PngEncoder, CompressionType, FilterType};
+    use image::ImageEncoder;
+    use std::fs::File;
+    use std::io::BufWriter;
+
+    let file = File::create(path)?;
+    let buf_writer = BufWriter::new(file);
+    
+    let encoder = PngEncoder::new_with_quality(
+        buf_writer,
+        CompressionType::Fast,  // 最小圧縮（実質無圧縮に近い）
+        FilterType::NoFilter,   // フィルタなし
+    );
+    
+    encoder.write_image(
+        img.as_bytes(),
+        img.width(),
+        img.height(),
+        img.color().into(),
+    )?;
+    
+    Ok(())
+}
+
 // GStreamer用のインポート
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -250,7 +279,8 @@ pub fn collect_training_data(
                     );
                     let tile_path = output_path.join(&tile_filename);
                     
-                    tile_img.save(&tile_path)
+                    let dynamic_img = image::DynamicImage::ImageRgb8(tile_img);
+                    save_as_uncompressed_png(&dynamic_img, &tile_path)
                         .map_err(|e| format!("タイル保存失敗: {}", e))?;
                     
                     tile_count += 1;
@@ -326,7 +356,7 @@ pub fn extract_tiles_from_video(
                 let tile_filename = format!("tile_f{:06}_r{}_c{}.png", frame_idx, row, col);
                 let tile_path = output_path.join(&tile_filename);
                 
-                tile.save(&tile_path)
+                save_as_uncompressed_png(&tile, &tile_path)
                     .map_err(|e| format!("タイル保存に失敗: {}", e))?;
                 
                 tile_count += 1;
@@ -351,19 +381,30 @@ pub struct ExtractTilesResponse {
     pub message: String,
 }
 
-/// デフォルトの分類フォルダを作成（dir_1～dir_9（dir_5を除く）とothers）
+/// デフォルトの分類フォルダを作成（dir_1～dir_9、others、およびuse_in_sequenceがtrueのボタン）
+/// include_neutral: trueの場合はdir_5（ニュートラル）も含める
 #[tauri::command]
 pub fn create_default_classification_folders(
     output_dir: String,
+    button_mapping_path: Option<String>,
+    include_neutral: Option<bool>,
 ) -> Result<String, String> {
     let base_path = PathBuf::from(&output_dir);
     
-    // デフォルトのクラス：方向キー8種 + others（dir_5はニュートラルなので除外）
-    let default_classes = vec![
+    // デフォルトのクラス：方向キー8種（または9種）+ others
+    let mut default_classes = vec![
         "dir_1", "dir_2", "dir_3", "dir_4",
+    ];
+    
+    // ニュートラル画像ありの場合はdir_5を追加
+    if include_neutral.unwrap_or(false) {
+        default_classes.push("dir_5");
+    }
+    
+    default_classes.extend_from_slice(&[
         "dir_6", "dir_7", "dir_8", "dir_9",
         "others"
-    ];
+    ]);
     
     let mut created_dirs = Vec::new();
     
@@ -375,7 +416,59 @@ pub fn create_default_classification_folders(
         created_dirs.push(class.to_string());
     }
     
-    Ok(format!("{}個のクラスディレクトリを作成しました", created_dirs.len()))
+    // ボタンマッピングからuse_in_sequenceがtrueのボタンフォルダを作成
+    if let Some(mapping_path) = button_mapping_path {
+        match load_button_mapping_for_folders(&mapping_path) {
+            Ok(button_names) => {
+                for button_name in button_names {
+                    let button_dir = base_path.join(&button_name);
+                    std::fs::create_dir_all(&button_dir)
+                        .map_err(|e| format!("ディレクトリ {} の作成に失敗: {}", button_name, e))?;
+                    created_dirs.push(button_name);
+                }
+            },
+            Err(e) => {
+                // エラーがあっても方向キーのフォルダは作成されているので警告として扱う
+                eprintln!("ボタンマッピングの読み込みに失敗: {}", e);
+            }
+        }
+    }
+    
+    Ok(format!("{}個のクラスディレクトリを作成しました: {}", created_dirs.len(), created_dirs.join(", ")))
+}
+
+/// ボタンマッピングからuse_in_sequenceがtrueのボタン名を取得
+fn load_button_mapping_for_folders(mapping_path: &str) -> Result<Vec<String>, String> {
+    use crate::types::ButtonMapping;
+    
+    println!("[DEBUG] load_button_mapping_for_folders: 入力パス = {}", mapping_path);
+    let path = PathBuf::from(mapping_path);
+    println!("[DEBUG] load_button_mapping_for_folders: PathBuf = {:?}", path);
+    println!("[DEBUG] load_button_mapping_for_folders: exists? = {}", path.exists());
+    
+    if !path.exists() {
+        return Err(format!("ボタンマッピングファイルが見つかりません: {:?}", path));
+    }
+    
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("ファイル読み込みエラー: {}", e))?;
+    
+    println!("[DEBUG] load_button_mapping_for_folders: ファイル読み込み成功、サイズ = {} bytes", content.len());
+    
+    let mapping: ButtonMapping = serde_json::from_str(&content)
+        .map_err(|e| format!("JSONパースエラー: {}", e))?;
+    
+    println!("[DEBUG] load_button_mapping_for_folders: JSONパース成功、mapping.len = {}", mapping.mapping.len());
+    
+    let button_names: Vec<String> = mapping.mapping
+        .iter()
+        .filter(|btn| btn.use_in_sequence)
+        .map(|btn| btn.user_button.clone())
+        .collect();
+    
+    println!("[DEBUG] load_button_mapping_for_folders: use_in_sequence=true のボタン = {:?}", button_names);
+    
+    Ok(button_names)
 }
 
 /// 学習用ディレクトリを作成（必須クラスのサブディレクトリを自動生成）

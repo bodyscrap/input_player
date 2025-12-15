@@ -5,9 +5,8 @@ import "./TrainingDialog.css";
 
 interface ModelConfigDialogProps {
   onClose: () => void;
-  onModelSet: (modelPath: string, metadata: ModelMetadata) => void;
+  onModelSet: (modelPath: string) => void;
   currentModelPath: string | null;
-  buttonMapping: Record<string, string>; // マッピング設定
   sequenceButtons: string[]; // シーケンスで使用するボタン
 }
 
@@ -32,7 +31,6 @@ function ModelConfigDialog({
   onClose,
   onModelSet,
   currentModelPath,
-  buttonMapping,
   sequenceButtons,
 }: ModelConfigDialogProps) {
   const [modelPath, setModelPath] = useState(currentModelPath || "");
@@ -117,7 +115,7 @@ function ModelConfigDialog({
 
   const handleSetModel = () => {
     if (modelPath && metadata && isCompatible) {
-      onModelSet(modelPath, metadata);
+      onModelSet(modelPath);
       onClose();
     }
   };

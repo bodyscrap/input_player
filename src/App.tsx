@@ -98,7 +98,6 @@ function App() {
   const [classificationModelPath, setClassificationModelPath] = useState<string | null>(() => {
     return localStorage.getItem("classificationModelPath");
   });
-  const [classificationModelMetadata, setClassificationModelMetadata] = useState<any>(null);
   
   // Save model path to localStorage
   useEffect(() => {
@@ -1355,6 +1354,7 @@ function App() {
         <VideoAnalyzer
           onClose={() => setShowVideoAnalyzer(false)}
           initialStep={videoAnalyzerStep}
+          currentMappingPath={currentMappingPath}
         />
       )}
 
@@ -1371,6 +1371,7 @@ function App() {
       {showTrainingDialog && (
         <TrainingDialog
           mlBackend={mlBackend}
+          currentMappingPath={currentMappingPath}
           onClose={() => setShowTrainingDialog(false)}
         />
       )}
@@ -1387,13 +1388,11 @@ function App() {
       {showModelConfigDialog && (
         <ModelConfigDialog
           onClose={() => setShowModelConfigDialog(false)}
-          onModelSet={(modelPath, metadata) => {
+          onModelSet={(modelPath) => {
             setClassificationModelPath(modelPath);
-            setClassificationModelMetadata(metadata);
             console.log("✓ 分類モデルを設定しました:", modelPath);
           }}
           currentModelPath={classificationModelPath}
-          buttonMapping={buttonMapping}
           sequenceButtons={sequenceButtons}
         />
       )}

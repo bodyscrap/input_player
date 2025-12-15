@@ -7,6 +7,14 @@ use std::path::PathBuf;
 fn main() {
     println!("=== Input Analyzer Backend Test ===\n");
     
+    // コマンドライン引数を取得
+    let args: Vec<String> = std::env::args().collect();
+    let model_path = if args.len() > 1 {
+        PathBuf::from(&args[1])
+    } else {
+        PathBuf::from(r"E:\workspace\input_analyzer\models\icon_classifier.tar.gz")
+    };
+    
     // テスト1: 動画情報取得
     println!("Test 1: 動画情報取得");
     test_video_info();
@@ -15,7 +23,7 @@ fn main() {
     
     // テスト2: モデルメタデータ読み込み
     println!("Test 2: モデルメタデータ読み込み");
-    test_model_metadata();
+    test_model_metadata(&model_path);
     
     println!("\n{}\n", "=".repeat(50));
     
@@ -41,9 +49,7 @@ fn test_video_info() {
     }
 }
 
-fn test_model_metadata() {
-    let model_path = PathBuf::from(r"E:\workspace\input_analyzer\models\icon_classifier.tar.gz");
-    
+fn test_model_metadata(model_path: &PathBuf) {
     match load_metadata(&model_path) {
         Ok(metadata) => {
             println!("✓ モデルメタデータ読み込み成功:");

@@ -823,6 +823,7 @@ pub fn run() {
             ml_commands::save_button_order_metadata,
             ml_commands::load_button_order_metadata,
             ml_commands::mp4_to_sequence,
+            ml_commands::validate_mapping_and_training_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

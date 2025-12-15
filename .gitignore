@@ -23,6 +23,7 @@ target
 # Node
 node_modules
 dist
+dist-ssr
 *.local
 
 # Editor directories
@@ -44,6 +45,21 @@ desktop.ini
 # Tauri build output
 src-tauri/target/
 src-tauri/WixTools/
+
+# Temporary files
+src-tauri/temp/
+
+# Training artifacts
+src-tauri/training_artifacts/
+
+# Log files
+*.log
+build_log.txt
+tauri_dev_log.txt
+
+# Backup files
+*.bak
+*~
 
 # Application config (may contain user-specific settings)
 # Uncomment if you want to ignore user configs

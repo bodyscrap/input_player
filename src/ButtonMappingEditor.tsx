@@ -395,13 +395,13 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
         <div className="editor-content">
           <div className="editor-controls">
             <button onClick={handleNewMapping} className="btn-file">
-              📝 新規作成
+              📝 新規
             </button>
             <button onClick={handleMappingFileSelect} className="btn-file">
-              📁 開く
+              📁 既存設定
             </button>
             <button onClick={handleCsvFileSelect} className="btn-file">
-              📄 CSVから作成
+              📄 ファイル読込
             </button>
             <button 
               onClick={saveMappingToFile} 
@@ -443,12 +443,12 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
         <thead>
           <tr>
             <th style={{ width: '30px' }}>🔀</th>
-            <th>CSVボタン名</th>
+            <th>ボタン名</th>
             <th>→</th>
-            <th>Xboxボタン</th>
+            <th>コントローラー側ボタン</th>
             <th>シーケンス</th>
             <th>順序</th>
-            <th>操作</th>
+            <th>削除</th>
           </tr>
         </thead>
         <tbody>

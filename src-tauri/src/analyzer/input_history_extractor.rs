@@ -48,12 +48,13 @@ impl InputState {
 #[cfg(feature = "ml")]
 pub fn update_input_state(state: &mut InputState, class_name: &str) {
     if class_name.starts_with("dir_") {
-        // 方向入力
+        // 方向入力（dir_5はニュートラル）
         match class_name {
             "dir_1" => state.direction = 1,
             "dir_2" => state.direction = 2,
             "dir_3" => state.direction = 3,
             "dir_4" => state.direction = 4,
+            "dir_5" => state.direction = 5, // ニュートラル専用画像
             "dir_6" => state.direction = 6,
             "dir_7" => state.direction = 7,
             "dir_8" => state.direction = 8,
@@ -64,6 +65,7 @@ pub fn update_input_state(state: &mut InputState, class_name: &str) {
         // ボタン入力（empty/others以外）
         state.buttons.insert(class_name.to_string(), 1);
     }
+    // 注意: 方向キーが検出されない場合、state.directionは初期値の5（ニュートラル）のまま
 }
 
 /// 最下行のアイコンを抽出

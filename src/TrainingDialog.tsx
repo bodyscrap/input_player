@@ -6,6 +6,7 @@ import "./TrainingDialog.css";
 
 interface TrainingDialogProps {
   mlBackend: "cpu" | "wgpu";
+  currentMappingPath: string;
   onClose: () => void;
 }
 
@@ -28,7 +29,7 @@ interface TrainingProgress {
   log_lines: string[];
 }
 
-function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
+function TrainingDialog({ mlBackend, currentMappingPath, onClose }: TrainingDialogProps) {
   const [config, setConfig] = useState<TrainingConfig>({
     dataDir: "",
     outputDir: "", // useEffectで初期化
@@ -189,6 +190,18 @@ function TrainingDialog({ mlBackend, onClose }: TrainingDialogProps) {
 
     if (buttonLabels.length === 0) {
       alert("ボタンラベルが検出されませんでした。");
+      return;
+    }
+
+    // マッピング設定と学習データの整合性チェック
+    try {
+      await invoke("validate_mapping_and_training_data", {
+        mappingPath: currentMappingPath,
+        dataDir: config.dataDir,
+      });
+    } catch (error) {
+      // 警告を表示して学習を中止
+      alert(String(error));
       return;
     }
 

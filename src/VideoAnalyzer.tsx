@@ -20,9 +20,10 @@ interface AnalysisRegion {
 interface VideoAnalyzerProps {
   onClose: () => void;
   initialStep?: "region-setup" | "collect-data";
+  currentMappingPath: string;
 }
 
-export default function VideoAnalyzer({ onClose, initialStep = "region-setup" }: VideoAnalyzerProps) {
+export default function VideoAnalyzer({ onClose, initialStep = "region-setup", currentMappingPath }: VideoAnalyzerProps) {
   // ワークフロー: region-config → tile-extract → collect-data → (manual-labeling) → train → inference
   const [currentStep, _setCurrentStep] = useState<"region-config" | "tile-extract" | "collect-data" | "inference">(
     initialStep === "region-setup" ? "region-config" : "collect-data"
@@ -43,6 +44,7 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup" }:
   });
   const [frameInterval, setFrameInterval] = useState<number>(10); // タイル抽出時の間引き間隔
   const [tileOutputDir, setTileOutputDir] = useState<string>("");
+  const [hasNeutralImage, setHasNeutralImage] = useState<boolean>(false); // ニュートラル画像ありフラグ
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<string>("");
   const [zoom, setZoom] = useState<number>(1.0);
@@ -393,11 +395,18 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup" }:
       if (createFolders === true) {
         console.log("[handleCollectTrainingData] フォルダ作成開始");
         try {
-          await invoke("create_default_classification_folders", {
+          // currentMappingPathを使用（App.tsxから渡される現在のマッピングファイルのパス）
+          const buttonMappingPath = currentMappingPath || null;
+          console.log("[handleCollectTrainingData] 使用するマッピングファイル:", buttonMappingPath);
+          console.log("[handleCollectTrainingData] ニュートラル画像あり:", hasNeutralImage);
+          
+          const result = await invoke<string>("create_default_classification_folders", {
             outputDir: tileOutputDir,
+            buttonMappingPath,
+            includeNeutral: hasNeutralImage,
           });
-          console.log("[handleCollectTrainingData] フォルダ作成完了");
-          alert("デフォルトフォルダを作成しました。\n\n作成されたフォルダ:\ndir_1, dir_2, dir_3, dir_4, dir_6, dir_7, dir_8, dir_9, others\n\n次のステップ:\n1. 抽出された画像をクラスごとにフォルダ分け\n2. モデル学習を実行");
+          console.log("[handleCollectTrainingData] フォルダ作成完了:", result);
+          alert(`デフォルトフォルダを作成しました。\n\n${result}\n\n次のステップ:\n1. 抽出された画像をクラスごとにフォルダ分け\n2. モデル学習を実行`);
         } catch (error) {
           console.error("フォルダ作成エラー:", error);
           alert(`フォルダの作成に失敗しました: ${error}`);
@@ -838,6 +847,16 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup" }:
                     min={1}
                   />
                   <span style={{ fontSize: "12px", color: "#ccc", marginLeft: "10px" }}>（例: 30 = 30フレームごとに1枚抽出）</span>
+                </label>
+
+                <label style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <input 
+                    type="checkbox" 
+                    checked={hasNeutralImage} 
+                    onChange={(e) => setHasNeutralImage(e.target.checked)}
+                  />
+                  ニュートラル画像あり
+                  <span style={{ fontSize: "12px", color: "#ccc" }}>（方向入力なし状態に専用のタイル画像が存在する場合）</span>
                 </label>
               </div>
 

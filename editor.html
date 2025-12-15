@@ -1,44 +1,13 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sequence Editor</title>
-    <style>
-      body {
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        background: #1e1e1e;
-      }
-      #editor-root {
-        width: 100vw;
-        height: 100vh;
-      }
-      #debug-info {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        background: rgba(0, 255, 0, 0.1);
-        color: #0f0;
-        padding: 10px;
-        font-family: monospace;
-        font-size: 12px;
-        z-index: 10000;
-        pointer-events: none;
-      }
-    </style>
   </head>
   <body>
-    <div id="debug-info">Loading editor.html...</div>
-    <div id="editor-root"></div>
-    <script>
-      console.log("========== editor.html loaded ==========");
-      console.log("Location:", window.location.href);
-      console.log("Search params:", window.location.search);
-      document.getElementById('debug-info').textContent = 'editor.html loaded, loading React...';
-    </script>
+    <div id="root"></div>
     <script type="module" src="/src/editor-main.tsx"></script>
   </body>
 </html>
