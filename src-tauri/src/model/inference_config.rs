@@ -18,6 +18,9 @@ pub struct InferenceConfig {
     /// ボタンラベル一覧
     pub button_labels: Vec<String>,
 
+    /// 全クラスラベル（方向キー + ボタン + others）
+    pub all_class_labels: Vec<String>,
+
     /// 入力画像解像度
     pub image_width: u32,
     pub image_height: u32,
@@ -41,6 +44,7 @@ impl InferenceConfig {
     pub fn from_metadata(metadata: &ModelMetadata) -> Self {
         Self {
             button_labels: metadata.button_labels.clone(),
+            all_class_labels: metadata.all_class_labels.clone(),
             image_width: metadata.image_width,
             image_height: metadata.image_height,
             tile_x: metadata.tile_x,
@@ -64,9 +68,10 @@ impl InferenceConfig {
         self.button_labels.len()
     }
 
-    /// 方向を含むすべてのクラス数を取得（方向8 + ボタン + others）
+    /// 方向を含むすべてのクラス数を取得
+    /// all_class_labelsから実際のクラス数を返す
     pub fn num_total_classes(&self) -> usize {
-        8 + self.button_labels.len() + 1  // direction(8) + buttons + others
+        self.all_class_labels.len()
     }
 
     /// クラスインデックスからボタンラベルを取得
@@ -101,11 +106,12 @@ impl InferenceConfig {
         println!("\n=== 推論設定 ===");
         println!("ボタンラベル数: {}", self.button_labels.len());
         println!("ボタンラベル: {}", self.button_labels.join(", "));
+        println!("全クラスラベル: {}", self.all_class_labels.join(", "));
         println!("入力画像解像度: {}x{}", self.image_width, self.image_height);
         println!("タイル範囲: ({}, {}) - {}x{}", self.tile_x, self.tile_y, self.tile_width, self.tile_height);
         println!("列数: {}", self.columns_per_row);
         println!("モデル入力サイズ: {}x{}", self.model_input_size, self.model_input_size);
-        println!("総クラス数: {} (方向8 + ボタン{} + others)", self.num_total_classes(), self.button_labels.len());
+        println!("総クラス数: {}", self.num_total_classes());
         println!("==================");
     }
 }

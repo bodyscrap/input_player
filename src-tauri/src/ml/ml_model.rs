@@ -229,7 +229,8 @@ impl<B: Backend> IconClassifier<B> {
 /// - 正規化されたRGB画像データ (C, H, W) の順で平坦化
 #[cfg(feature = "ml")]
 pub fn load_and_normalize_image_with_size(path: &std::path::Path, expected_size: usize) -> anyhow::Result<Vec<f32>> {
-    let img = image::open(path)?.to_rgb8();
+    let img = image::open(path)?;
+    let img = img.to_rgb8();
     let (width, height) = img.dimensions();
 
     if width != expected_size as u32 || height != expected_size as u32 {

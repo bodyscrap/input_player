@@ -16,7 +16,7 @@ use burn_wgpu::WgpuDevice;
 use std::io::Write;
 
 #[cfg(feature = "ml")]
-use crate::ml::{IconClassifier, ModelConfig, load_and_normalize_image};
+use crate::ml::{IconClassifier, ModelConfig, load_and_normalize_image_with_size};
 #[cfg(feature = "ml")]
 use crate::model::{load_metadata, load_model_binary, InferenceConfig};
 
@@ -60,15 +60,10 @@ impl InferenceEngine {
 
         // モデルバイナリ読み込み（.mpk形式）
         let model_binary = load_model_binary(model_path.as_ref())?;
-        
-        println!("モデルバイナリサイズ: {} バイト", model_binary.len());
-        println!("最初の16バイト: {:?}", &model_binary[..16.min(model_binary.len())]);
 
         // 一時ファイルに書き出してDefaultFileRecorder(FullPrecision)で読み込む
         let temp_dir = std::env::temp_dir();
         let temp_model_path = temp_dir.join(format!("model_{}.mpk", std::process::id()));
-        
-        println!("一時ファイルパス: {:?}", temp_model_path);
         
         {
             let mut temp_file = std::fs::File::create(&temp_model_path)?;
@@ -78,16 +73,12 @@ impl InferenceEngine {
         // モデルの重みを復元（DefaultFileRecorder<FullPrecisionSettings>を使用 - 学習時と同じ）
         let record = DefaultFileRecorder::<FullPrecisionSettings>::new()
             .load(temp_model_path.clone(), &device)
-            .map_err(|e| {
-                println!("DefaultFileRecorder読み込みエラー: {:?}", e);
-                anyhow::anyhow!("モデル重みの読み込みエラー: {:?}", e)
-            })?;
+            .map_err(|e| anyhow::anyhow!("モデル重みの読み込みエラー: {:?}", e))?;
 
         // 一時ファイルを削除
         let _ = std::fs::remove_file(temp_model_path);
 
         let model = model.load_record(record);
-
         Ok(Self {
             model,
             config,
@@ -97,12 +88,65 @@ impl InferenceEngine {
 
     /// 単一画像を分類
     pub fn classify_image<P: AsRef<Path>>(&self, image_path: P) -> Result<String> {
-        // 画像読み込み・正規化
-        let image_data = load_and_normalize_image(image_path.as_ref())?;
-
+        // 画像読み込み・正規化（モデルの期待するサイズを使用）
         let img_size = self.config.model_input_size as usize;
+        let image_data = load_and_normalize_image_with_size(image_path.as_ref(), img_size)?;
+
         // Tensorに変換 [1, 3, img_size, img_size]
         let tensor = Tensor::<Wgpu, 1>::from_floats(image_data.as_slice(), &self.device)
+            .reshape([1, 3, img_size, img_size]);
+
+        // 推論実行
+        let output = self.model.forward(tensor);
+        
+        // 最大値のインデックスを取得
+        let predicted = output.argmax(1);
+        let class_idx = predicted
+            .into_data()
+            .to_vec::<i32>()
+            .map_err(|e| anyhow::anyhow!("推論結果の取得エラー: {:?}", e))?[0] as usize;
+
+        // クラス名に変換
+        let class_name = self.config.class_index_to_label(class_idx)
+            .ok_or_else(|| anyhow::anyhow!("クラスインデックス {} は範囲外です", class_idx))?;
+
+        Ok(class_name)
+    }
+
+    /// メモリ上の画像を直接分類（ファイルI/Oなし）
+    pub fn classify_image_direct(&self, img: &image::RgbImage) -> Result<String> {
+        let img_size = self.config.model_input_size as usize;
+        let (width, height) = img.dimensions();
+        
+        // サイズチェック
+        if width != img_size as u32 || height != img_size as u32 {
+            anyhow::bail!(
+                "画像サイズが不正です: {}x{} (期待: {}x{})",
+                width,
+                height,
+                img_size,
+                img_size
+            );
+        }
+
+        // 正規化
+        let mut data = Vec::with_capacity(3 * img_size * img_size);
+        let mean = [0.485, 0.456, 0.406];
+        let std = [0.229, 0.224, 0.225];
+
+        for channel in 0..3 {
+            for y in 0..height {
+                for x in 0..width {
+                    let pixel = img.get_pixel(x, y);
+                    let value = pixel[channel] as f32 / 255.0;
+                    let normalized = (value - mean[channel]) / std[channel];
+                    data.push(normalized);
+                }
+            }
+        }
+
+        // Tensorに変換
+        let tensor = Tensor::<Wgpu, 1>::from_floats(data.as_slice(), &self.device)
             .reshape([1, 3, img_size, img_size]);
 
         // 推論実行

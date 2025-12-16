@@ -1,0 +1,27 @@
+{
+  "device_type": "Wgpu",
+  "model": {
+    "model_path": "models/icon_classifier.bin",
+    "num_classes": 14,
+    "dropout": 0.5
+  },
+  "training": {
+    "num_epochs": 50,
+    "batch_size": 8,
+    "num_workers": 1,
+    "learning_rate": 0.001,
+    "seed": 42,
+    "train_ratio": 0.8
+  },
+  "button_tile": {
+    "x": 34,
+    "y": 256,
+    "tile_size": 38,
+    "columns_per_row": 9,
+    "source_video_width": 1920,
+    "source_video_height": 1080
+  },
+  "last_video_path": null,
+  "last_output_dir": null,
+  "training_output_dir": null
+}

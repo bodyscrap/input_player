@@ -839,6 +839,7 @@ pub async fn mp4_to_sequence(
         estimated_total_frames, video_info.duration_sec, video_info.fps);
     
     // 初期進捗を送信
+    println!("[MP4→CSV] 進捗通知: 推論エンジンを初期化中...");
     on_progress.send(ExtractionProgress {
         current_frame: 0,
         total_frames: estimated_total_frames,
@@ -847,16 +848,26 @@ pub async fn mp4_to_sequence(
     
     // バックエンド設定
     let use_gpu = backend == "wgpu";
+    println!("[MP4→CSV] バックエンド設定: use_gpu={}", use_gpu);
     
     // 推論エンジンを初期化（バックエンド指定）
+    println!("[MP4→CSV] InferenceEngine::load_with_backend 呼び出し開始");
     let engine = InferenceEngine::load_with_backend(&PathBuf::from(&model_path), use_gpu)
         .map_err(|e| format!("推論エンジンの初期化エラー: {}", e))?;
+    println!("[MP4→CSV] InferenceEngine::load_with_backend 呼び出し完了");
     
-    use std::fs;
+    // エンジン初期化完了の通知
+    on_progress.send(ExtractionProgress {
+        current_frame: 0,
+        total_frames: estimated_total_frames,
+        message: "モデル読み込み完了。フレーム処理を準備中...".to_string(),
+    }).ok();
     
     // メタデータから領域設定を取得
+    println!("[MP4→CSV] メタデータ読み込み開始");
     let metadata = load_metadata(&PathBuf::from(&model_path))
         .map_err(|e| format!("メタデータ読み込みエラー: {}", e))?;
+    println!("[MP4→CSV] メタデータ読み込み完了");
     
     let button_labels = metadata.button_labels.clone();
     
@@ -891,12 +902,6 @@ pub async fn mp4_to_sequence(
     println!("[MP4→CSV] InputIndicatorRegion: x={}, y={}, width={}, height={}, rows={}, cols={}",
         region.x, region.y, region.width, region.height, region.rows, region.cols);
     
-    // 一時ディレクトリ（システムのtempディレクトリを使用してViteの監視範囲外に配置）
-    let temp_dir = std::env::temp_dir().join("input_player_mp4_conversion");
-    fs::create_dir_all(&temp_dir).map_err(|e| format!("一時ディレクトリ作成エラー: {}", e))?;
-    let tile_dir = temp_dir.join("tiles");
-    fs::create_dir_all(&tile_dir).ok();
-    
     // CSV出力準備
     let mut csv_writer = csv::Writer::from_path(&output_csv_path)
         .map_err(|e| format!("CSV作成エラー: {}", e))?;
@@ -913,10 +918,10 @@ pub async fn mp4_to_sequence(
     let mut total_frames = 0u32;
     let mut sequence_steps = 0u32; // シーケンスステップ数
     
-    // フレーム抽出設定
+    // フレーム抽出設定（output_dirは使用しない）
     let frame_config = FrameExtractorConfig {
         frame_interval: 1, // 全フレーム
-        output_dir: temp_dir.clone(),
+        output_dir: PathBuf::from("."), // ダミー（使用しない）
         image_format: "png".to_string(),
         jpeg_quality: 95,
     };
@@ -925,19 +930,29 @@ pub async fn mp4_to_sequence(
     
     println!("[MP4→CSV] フレーム処理開始");
     
-    // 初期進捗を送信
+    // フレーム処理開始の進捗を送信
     on_progress.send(ExtractionProgress {
         current_frame: 0,
         total_frames: estimated_total_frames,
         message: "フレーム処理を開始...".to_string(),
     }).ok();
+    println!("[MP4→CSV] 進捗通知: フレーム処理を開始...");
     
     // 同期処理: フレーム抽出とタイル推論を同じスレッド内で実行
+    println!("[MP4→CSV] process_frames_sync 呼び出し開始");
     extractor.process_frames_sync(&video_path, |frame_img, frame_num| {
         total_frames = frame_num + 1;
         
+        // 最初のフレームで確認ログ
+        if frame_num == 0 {
+            println!("[MP4→CSV] 最初のフレームを受信");
+        }
+        
         // 30フレームごとに進捗通知
         if frame_num % 30 == 0 {
+            println!("[MP4→CSV] フレーム {} 処理中 ({}%)", 
+                frame_num, 
+                (frame_num as f32 / estimated_total_frames as f32 * 100.0) as u32);
             on_progress.send(ExtractionProgress {
                 current_frame: frame_num,
                 total_frames: estimated_total_frames,
@@ -948,27 +963,37 @@ pub async fn mp4_to_sequence(
         }
         
         // フレームから入力インジケータ領域のタイルを抽出
+        if frame_num == 0 {
+            println!("[MP4→CSV] フレーム0: タイル抽出開始");
+        }
         let tiles = crate::analyzer::extract_tiles_from_image(frame_img, &region)
             .map_err(|e| anyhow::anyhow!("タイル抽出エラー: {}", e))?;
+        if frame_num == 0 {
+            println!("[MP4→CSV] フレーム0: タイル抽出完了 ({}個)", tiles.len());
+        }
         
-        // 各タイルを推論
+        // 各タイルを推論（メモリ上で直接処理）
         let mut current_state = InputState::new();
         
         for (i, tile) in tiles.into_iter().enumerate() {
-            let tile_path = tile_dir.join(format!("tile_{}_{}.png", frame_num, i));
-            let dynamic_img = image::DynamicImage::ImageRgb8(tile);
-            save_as_uncompressed_png(&dynamic_img, &tile_path)
-                .map_err(|e| anyhow::anyhow!("タイル保存エラー: {}", e))?;
+            if frame_num == 0 && i == 0 {
+                println!("[MP4→CSV] フレーム0: 最初のタイル処理開始（直接推論）");
+            }
             
-            // 推論実行
-            let class_name = engine.classify_image(&tile_path)
+            // ファイルI/Oなしで直接推論
+            let class_name = engine.classify_image_direct(&tile)
                 .map_err(|e| anyhow::anyhow!("推論エラー: {}", e))?;
+            
+            if frame_num == 0 && i == 0 {
+                println!("[MP4→CSV] フレーム0: 最初のタイル推論完了 (クラス: {})", class_name);
+            }
             
             // 入力状態に反映
             crate::analyzer::update_input_state(&mut current_state, &class_name);
-            
-            // タイルを削除
-            fs::remove_file(&tile_path).ok();
+        }
+        
+        if frame_num == 0 {
+            println!("[MP4→CSV] フレーム0: 全タイル処理完了");
         }
         
         // 状態が変化したらCSVに書き込み
@@ -1005,9 +1030,6 @@ pub async fn mp4_to_sequence(
     
     csv_writer.flush()
         .map_err(|e| format!("CSVフラッシュエラー: {}", e))?;
-    
-    // 一時ディレクトリを削除
-    fs::remove_dir_all(&temp_dir).ok();
     
     println!("[MP4→CSV] 完了: {}フレーム → {}シーケンスステップ (平均: {:.1}F/ステップ)", 
         total_frames, sequence_steps, total_frames as f32 / sequence_steps.max(1) as f32);
