@@ -468,14 +468,12 @@ where
     log_callback(format!("モデル設定: {} クラス, 入力サイズ: {}x{}, dropout={}", 
         num_classes, tile_size, tile_size, model_config.dropout));
     
-    // デバイス設定（バックエンド設定に基づく）
-    let device = if use_gpu {
-        log_callback("GPU (WGPU) モードで学習を開始します".to_string());
-        WgpuDevice::DiscreteGpu(0)
-    } else {
-        log_callback("CPU (WGPU) モードで学習を開始します".to_string());
-        WgpuDevice::Cpu
-    };
+    // デバイス設定（WGPUはGPU専用のため、use_gpuに関わらずGPUを使用）
+    if !use_gpu {
+        log_callback("警告: WGPUバックエンドはCPU推論に対応していません。GPUモードで実行します。".to_string());
+    }
+    let device = WgpuDevice::DiscreteGpu(0);
+    log_callback("GPU (WGPU) モードで学習を開始します".to_string());
     log_callback(format!("使用デバイス: {:?}", device));
     
     // バッチャー作成
@@ -652,11 +650,15 @@ where
 /// タイル分類を実行（学習データフィードバック用）
 #[cfg(feature = "ml")]
 pub fn classify_tiles(
-    _model_path: PathBuf,
+    model_path: PathBuf,
     tiles_dir: PathBuf,
     output_dir: PathBuf,
+    use_gpu: bool,
 ) -> Result<HashMap<String, Vec<PathBuf>>> {
-    // TODO: モデル読み込みと推論を実装
+    use crate::ml::InferenceEngine;
+    
+    // モデル読み込み
+    let engine = InferenceEngine::load_with_backend(&model_path, use_gpu)?;
     
     let mut classified: HashMap<String, Vec<PathBuf>> = HashMap::new();
     
@@ -666,8 +668,9 @@ pub fn classify_tiles(
         let path = entry.path();
         
         if path.is_file() {
-            // TODO: 実際の分類処理
-            let class_name = "others".to_string(); // プレースホルダー
+            // 実際の分類処理
+            let class_name = engine.classify_image(&path)
+                .unwrap_or_else(|_| "others".to_string());
             
             classified.entry(class_name.clone())
                 .or_insert_with(Vec::new)

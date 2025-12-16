@@ -14,6 +14,8 @@ use crate::analyzer::{InputState, InputIndicatorRegion};
 #[cfg(feature = "ml")]
 use crate::model::load_metadata;
 #[cfg(feature = "ml")]
+use std::fs;
+#[cfg(feature = "ml")]
 use crate::ml::InferenceEngine;
 
 /// 非圧縮PNGとして画像を保存するヘルパー関数
@@ -64,13 +66,12 @@ pub fn extract_input_history(
     video_path: String,
     model_path: String,
     output_csv_path: String,
+    use_gpu: bool,
     on_progress: tauri::ipc::Channel<ExtractionProgress>,
 ) -> Result<String, String> {
     // このスレッド内で推論エンジンを初期化（Sendとして渡す必要なし）
-    let engine = InferenceEngine::load(&PathBuf::from(&model_path))
+    let engine = InferenceEngine::load_with_backend(&PathBuf::from(&model_path), use_gpu)
         .map_err(|e| format!("推論エンジンの初期化エラー: {}", e))?;
-    
-    use std::fs;
     
     // メタデータから領域設定を取得
     let metadata = load_metadata(&PathBuf::from(&model_path))
@@ -340,6 +341,7 @@ pub fn classify_video_tiles(
     model_path: String,
     tiles_dir: String,
     output_dir: String,
+    use_gpu: bool,
 ) -> Result<ClassificationResult, String> {
     use crate::ml::classify_tiles;
     
@@ -347,6 +349,7 @@ pub fn classify_video_tiles(
         PathBuf::from(model_path),
         PathBuf::from(tiles_dir),
         PathBuf::from(output_dir),
+        use_gpu,
     )
     .map_err(|e| e.to_string())?;
     
@@ -948,19 +951,17 @@ pub async fn mp4_to_sequence(
             println!("[MP4→CSV] 最初のフレームを受信");
         }
         
-        // 30フレームごとに進捗通知
-        if frame_num % 30 == 0 {
-            println!("[MP4→CSV] フレーム {} 処理中 ({}%)", 
+        // 進捗通知
+        println!("[MP4→CSV] フレーム {} 処理中 ({}%)", 
+            frame_num, 
+            (frame_num as f32 / estimated_total_frames as f32 * 100.0) as u32);
+        on_progress.send(ExtractionProgress {
+            current_frame: frame_num,
+            total_frames: estimated_total_frames,
+            message: format!("{}フレーム処理中... ({}%)", 
                 frame_num, 
-                (frame_num as f32 / estimated_total_frames as f32 * 100.0) as u32);
-            on_progress.send(ExtractionProgress {
-                current_frame: frame_num,
-                total_frames: estimated_total_frames,
-                message: format!("{}フレーム処理中... ({}%)", 
-                    frame_num, 
-                    (frame_num as f32 / estimated_total_frames as f32 * 100.0) as u32),
-            }).ok();
-        }
+                (frame_num as f32 / estimated_total_frames as f32 * 100.0) as u32),
+        }).ok();
         
         // フレームから入力インジケータ領域のタイルを抽出
         if frame_num == 0 {
