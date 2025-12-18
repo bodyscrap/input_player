@@ -95,6 +95,10 @@ AVIみたいな無圧縮形式で撮れば上手くいくかもしれません�
 
 ### 2. 事前にインストールが必要なソフトウェア
 
+- **VC Runtime**:  
+Visual C++ 再頒布可能パッケージ (x64) (いわゆるVCランタイム)をインストール。  
+[Microsoftのダウンロードページ](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version)
+
 - **ViGEmBusドライバー(必須)**:  
 仮想USBコントローラ。  
 [ViGEmBus Releases](https://github.com/ViGEm/ViGEmBus/releases)から最新版をダウンロードしてインストール
@@ -103,7 +107,7 @@ AVIみたいな無圧縮形式で撮れば上手くいくかもしれません�
 [公式サイト](https://gstreamer.freedesktop.org/download/)からWindows用のランタイムをダウンロードしてインストール。
 インストール時のオプションは以下を推奨：
   - 「Complete」インストールタイプを選択
-  - 環境変数にパスを追加する
+  - 環境変数にパスを追加する(Path に `%GSTREAMER_1_0_ROOT_MSVC_X86_64%\bin`)
 
 ### 2. アプリケーションのインストール
 
