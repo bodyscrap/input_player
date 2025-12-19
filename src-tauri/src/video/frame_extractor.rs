@@ -68,6 +68,17 @@ impl FrameExtractor {
         Self::init_gstreamer()?;
 
         let video_path = video_path.as_ref();
+        
+        // ファイルの存在チェック
+        if !video_path.exists() {
+            anyhow::bail!("動画ファイルが見つかりません: {:?}", video_path);
+        }
+        
+        // ファイルが読み取り可能かチェック
+        if let Err(e) = std::fs::metadata(video_path) {
+            anyhow::bail!("動画ファイルにアクセスできません: {:?} ({})", video_path, e);
+        }
+        
         let uri = format!(
             "file:///{}",
             video_path
@@ -123,6 +134,17 @@ impl FrameExtractor {
         Self::init_gstreamer()?;
 
         let video_path = video_path.as_ref();
+        
+        // ファイルの存在チェック
+        if !video_path.exists() {
+            anyhow::bail!("動画ファイルが見つかりません: {:?}", video_path);
+        }
+        
+        // ファイルが読み取り可能かチェック
+        if let Err(e) = std::fs::metadata(video_path) {
+            anyhow::bail!("動画ファイルにアクセスできません: {:?} ({})", video_path, e);
+        }
+        
         println!("動画ファイルを開いています: {}", video_path.display());
 
         // 出力ディレクトリを作成
@@ -382,6 +404,17 @@ impl FrameExtractor {
         Self::init_gstreamer()?;
 
         let video_path = video_path.as_ref();
+        
+        // ファイルの存在チェック
+        if !video_path.exists() {
+            anyhow::bail!("動画ファイルが見つかりません: {:?}", video_path);
+        }
+        
+        // ファイルが読み取り可能かチェック
+        if let Err(e) = std::fs::metadata(video_path) {
+            anyhow::bail!("動画ファイルにアクセスできません: {:?} ({})", video_path, e);
+        }
+        
         println!("動画ファイルを開いています: {}", video_path.display());
 
         // 出力ディレクトリを作成

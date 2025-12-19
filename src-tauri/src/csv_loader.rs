@@ -1,13 +1,24 @@
 use crate::types::InputFrame;
-use anyhow::Result;
+use anyhow::{Result, Context};
 use csv::ReaderBuilder;
 use std::collections::HashMap;
 use std::path::Path;
 
 pub fn load_csv(path: &Path) -> Result<Vec<InputFrame>> {
+    // ファイルの存在チェック
+    if !path.exists() {
+        anyhow::bail!("ファイルが見つかりません: {:?}", path);
+    }
+    
+    // ファイルが読み取り可能かチェック
+    if let Err(e) = std::fs::metadata(path) {
+        anyhow::bail!("ファイルにアクセスできません: {:?} ({})", path, e);
+    }
+    
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
-        .from_path(path)?;
+        .from_path(path)
+        .context(format!("CSVファイルを開けませんでした: {:?}", path))?;
 
     let headers = reader.headers()?.clone();
     let mut frames = Vec::new();
@@ -51,9 +62,20 @@ pub fn load_csv(path: &Path) -> Result<Vec<InputFrame>> {
 }
 
 pub fn get_csv_button_names(path: &Path) -> Result<Vec<String>> {
+    // ファイルの存在チェック
+    if !path.exists() {
+        anyhow::bail!("ファイルが見つかりません: {:?}", path);
+    }
+    
+    // ファイルが読み取り可能かチェック
+    if let Err(e) = std::fs::metadata(path) {
+        anyhow::bail!("ファイルにアクセスできません: {:?} ({})", path, e);
+    }
+    
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
-        .from_path(path)?;
+        .from_path(path)
+        .context(format!("CSVファイルを開けませんでした: {:?}", path))?;
 
     let headers = reader.headers()?;
     

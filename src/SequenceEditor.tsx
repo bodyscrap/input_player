@@ -160,7 +160,9 @@ function SequenceEditor({
       console.log("✓ State updated successfully");
     } catch (error) {
       console.error("✗ loadFrames error:", error);
-      setMessage(`エラー: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setMessage(`ファイル読み込みエラー: ${errorMessage}`);
+      alert(`シーケンスファイルの読み込みに失敗しました:\n${csvPath}\n\nエラー: ${errorMessage}`);
     }
   };
 

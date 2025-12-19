@@ -63,7 +63,9 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
       setHasUnsavedChanges(false);
       setMessage(`現在のマッピングを読み込みました: ${currentMappingPath}`);
     } catch (error) {
-      setMessage("マッピング設定が見つかりません。ファイルを選択してください。");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("マッピング読み込みエラー:", error);
+      setMessage(`マッピング設定が読み込めませんでした。エラー: ${errorMessage}`);
       const emptyMapping: ButtonMapping = {
         controller_type: "xbox",
         mapping: [],
@@ -150,7 +152,10 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
         onMappingSaved(file);
       }
     } catch (error) {
-      setMessage(`読み込みエラー: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("マッピング読み込みエラー:", error);
+      setMessage(`読み込みエラー: ${errorMessage}`);
+      alert(`マッピングファイルの読み込みに失敗しました:\n${file}\n\nエラー: ${errorMessage}`);
     }
   };
 
@@ -192,7 +197,10 @@ function ButtonMappingEditor({ onClose, initialConnected, activeTestButton, setA
       setHasUnsavedChanges(false);
       setMessage(`CSVから${buttons.length}個のボタンを検出し、マッピングを作成しました。「名前を付けて保存」で保存してください。`);
     } catch (error) {
-      setMessage(`CSV読み込みエラー: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("CSV読み込みエラー:", error);
+      setMessage(`CSV読み込みエラー: ${errorMessage}`);
+      alert(`CSVファイルの読み込みに失敗しました:\n${file}\n\nエラー: ${errorMessage}`);
     }
   };
 

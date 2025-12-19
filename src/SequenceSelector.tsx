@@ -182,8 +182,10 @@ function SequenceSelector({
                         }
                       } catch (error) {
                         setIsCompatible(false);
-                        setMessage(`エラー: ${error}`);
+                        const errorMessage = error instanceof Error ? error.message : String(error);
+                        setMessage(`ファイル読み込みエラー: ${errorMessage}`);
                         setCsvButtons([]);
+                        console.error("CSV読み込みエラー:", error);
                       }
                     }
                   }

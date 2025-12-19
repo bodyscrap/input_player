@@ -317,19 +317,21 @@ function App() {
       console.log(`✓ マッピング設定を読み込み、次回起動時に適用: ${path}`);
     } catch (error) {
       console.log("マッピング読み込みエラー:", error);
-      // ファイルが存在しない、または読み込みに失敗した場合は空の状態で初期化
-      // これがデフォルトマッピング（マッピングなし）の状態
-      setButtonMapping({});
-      setSequenceButtons([]);
-      setButtonOrder([]);
-      setCurrentMappingPath("");
       
-      // 初回起動時のみlocalStorageをクリア（ユーザーが選択したファイルが壊れている場合は保持）
+      // 初回起動時はマッピングなしで初期化
       if (isInitialLoad) {
+        setButtonMapping({});
+        setSequenceButtons([]);
+        setButtonOrder([]);
+        setCurrentMappingPath("");
         localStorage.removeItem("lastMappingPath");
         console.log("マッピングなしで起動（初回または設定ファイル未存在）");
       } else {
-        console.log("マッピング読み込みに失敗しましたが、マッピングなしで続行");
+        // ユーザーが明示的にファイルを選択した場合は警告を表示
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`マッピングファイルの読み込みに失敗しました:\n${path}\n\nエラー: ${errorMessage}\n\n以前の設定を維持します。`);
+        console.log("マッピング読み込みに失敗しました。以前の設定を保持します。");
+        // 以前の状態を保持（何もしない）
       }
     }
   };
@@ -362,6 +364,8 @@ function App() {
       );
     } catch (error) {
       console.error(`読み込みエラー:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      alert(`シーケンスファイルの読み込みに失敗しました:\n${csvPath}\n\nエラー: ${errorMessage}`);
     }
   };
 
@@ -901,6 +905,12 @@ function App() {
                     }}
                     onContextMenu={async (e) => {
                       e.preventDefault();
+                      
+                      // 再生中またはチェーン再生中は編集画面を開けない
+                      if (isPlaying || isPlayingChain) {
+                        return;
+                      }
+                      
                       if (e.ctrlKey && isLoaded) {
                         // Ctrl+右クリックで破棄
                         clearSlot(i);

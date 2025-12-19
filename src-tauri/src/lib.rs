@@ -241,14 +241,19 @@ fn load_button_mapping(path: String, state: State<AppState>) -> Result<ButtonMap
     };
 
     if !mapping_path.exists() {
-        return Err(format!("File not found: {:?}", mapping_path));
+        return Err(format!("ファイルが見つかりません: {:?}", mapping_path));
+    }
+
+    // ファイルが読み取り可能かチェック
+    if let Err(e) = std::fs::metadata(&mapping_path) {
+        return Err(format!("ファイルにアクセスできません: {:?} ({})", mapping_path, e));
     }
 
     let content = std::fs::read_to_string(&mapping_path)
-        .map_err(|e| format!("File read error: {}", e))?;
+        .map_err(|e| format!("ファイルの読み込みエラー: {} (パス: {:?})", e, mapping_path))?;
 
     let mapping: ButtonMapping = serde_json::from_str(&content)
-        .map_err(|e| format!("JSON parse error: {}", e))?;
+        .map_err(|e| format!("JSON解析エラー: {} (パス: {:?})", e, mapping_path))?;
 
     // 新フォーマットからHashMapとボタン順序を取得
     let mut button_map = HashMap::new();
