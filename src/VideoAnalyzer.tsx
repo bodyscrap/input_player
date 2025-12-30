@@ -57,6 +57,9 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup", c
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isFirstLoadRef = useRef<boolean>(true); // 初回読み込みフラグ
+  // フレーム単位のシーク補助
+  const desiredFrameRef = useRef<number | null>(null);
+  const seekAttemptRef = useRef<number>(0);
   
   // 最新のzoom/pan値をrefで保持
   const zoomRef = useRef<number>(zoom);
@@ -257,7 +260,22 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup", c
       // フレーム更新時にキャンバスを再描画
       video.onseeked = () => {
         if (videoInfo) {
-          setCurrentFrame(Math.floor(video.currentTime * videoInfo.fps));
+          const actualFrame = Math.floor(video.currentTime * videoInfo.fps);
+
+          // desiredFrame が設定されていて実際のフレームが小さい場合、
+          // 小さなオフセットを足して再シークを試みる（キーフレーム制約対策）
+          const desired = desiredFrameRef.current;
+          if (desired !== null && actualFrame < desired && seekAttemptRef.current < 3) {
+            seekAttemptRef.current += 1;
+            const nudge = 1 / (videoInfo.fps * 10); // 0.1 フレーム分の時間を詰める
+            video.currentTime = desired / videoInfo.fps + nudge;
+            return; // 再シーク後に再度 onseeked が呼ばれる
+          }
+
+          // シーク完了として反映
+          setCurrentFrame(actualFrame);
+          desiredFrameRef.current = null;
+          seekAttemptRef.current = 0;
         }
         drawRegionOnCanvas();
       };
@@ -317,7 +335,11 @@ export default function VideoAnalyzer({ onClose, initialStep = "region-setup", c
   const handleSeekVideo = (frameNum: number) => {
     if (!videoRef.current || !videoInfo) return;
     const time = frameNum / videoInfo.fps;
+    // desiredFrame をセットしてシーク
+    desiredFrameRef.current = frameNum;
+    seekAttemptRef.current = 0;
     videoRef.current.currentTime = time;
+    // 即座に表示を更新してレスポンス良く見せる（onseeked で補正される可能性あり）
     setCurrentFrame(frameNum);
   };
 

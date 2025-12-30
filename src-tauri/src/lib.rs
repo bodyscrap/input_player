@@ -156,6 +156,32 @@ fn start_playback(state: State<AppState>) -> Result<(), String> {
 fn stop_playback(state: State<AppState>) -> Result<(), String> {
     let mut player = state.player.lock().unwrap();
     player.stop();
+
+    // 停止時はコントローラーに中立入力を送信して、物理デバイス上で入力が残らないようにする
+    {
+        let mut controller = state.controller.lock().unwrap();
+        let neutral_frame = InputFrame {
+            duration: 1,
+            direction: 5,
+            buttons: HashMap::new(),
+            thumb_lx: 0,
+            thumb_ly: 0,
+            thumb_rx: 0,
+            thumb_ry: 0,
+            left_trigger: 0,
+            right_trigger: 0,
+        };
+
+        if let Err(e) = controller.update_input(&neutral_frame, false) {
+            eprintln!("警告: 停止時の中立入力送信に失敗しました: {:?}", e);
+        }
+    }
+
+    // フロントエンドに即時に停止イベントを送出
+    if let Some(app) = state.app_handle.lock().unwrap().as_ref() {
+        let _ = app.emit("playback-state-changed", "stopped");
+    }
+
     println!("[stop_playback] シーケンスモード停止 (マニュアルモード有効)");
     Ok(())
 }
@@ -746,11 +772,22 @@ pub fn run() {
                     if state == SequenceState::Playing {
                         // シーケンス再生モード: プレイヤーの update を呼ぶ
                         let mut player = player_clone.lock().unwrap();
-                        let mut controller = controller_clone.lock().unwrap();
-                        if let Ok((_sent, state_changed)) = player.update(&mut controller) {
+
+                        // コントローラが接続されているかチェックして、存在すれば渡す
+                        let mut controller_guard = controller_clone.lock().unwrap();
+                        let controller_connected = controller_guard.is_connected();
+
+                        let update_result = if controller_connected {
+                            player.update(Some(&mut *controller_guard))
+                        } else {
+                            // コントローラ未接続でも再生進行は行いたいので None を渡す
+                            player.update(None)
+                        };
+
+                        if let Ok((_sent, state_changed)) = update_result {
                             if state_changed {
                                 let new_state = player.get_state();
-                                
+
                                 // フロントエンドにイベント送信（ログは最小限に）
                                 if let Some(app) = app_handle_clone.lock().unwrap().as_ref() {
                                     let state_str = match new_state {
@@ -763,6 +800,7 @@ pub fn run() {
                                 }
                             }
                         }
+                        drop(controller_guard);
                     }
                     // マニュアルモード時はこのループでは何もしない（update_manual_inputで即座に送信）
                 }

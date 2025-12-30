@@ -690,6 +690,7 @@ function App() {
               onClick={() => setShowMappingEditor(true)}
               className="btn-mapping-config"
               title={currentMappingPath ? `現在のマッピング: ${currentMappingPath}` : "マッピング設定を開く"}
+              disabled={isPlaying}
             >
               ⚙️ マッピング設定
             </button>
@@ -697,12 +698,14 @@ function App() {
               onClick={() => setShowBackendSettings(true)}
               className="btn-backend-config"
               title={`現在のバックエンド: ${mlBackend.toUpperCase()}`}
+              disabled={isPlaying}
             >
               🖥️ バックエンド: {mlBackend.toUpperCase()}
             </button>
             <button
               onClick={isConnected ? handleDisconnect : handleConnect}
               className={`connection-status-button ${isConnected ? "connected" : "disconnected"}`}
+              disabled={isPlaying}
             >
               <span className="status-indicator">
                 {isConnected ? "●" : "○"}
@@ -720,6 +723,7 @@ function App() {
               }}
               className="btn-video-analyzer"
               title="動画から入力履歴を抽出"
+              disabled={isPlaying}
             >
               📍 解析範囲設定
             </button>
@@ -730,6 +734,7 @@ function App() {
               }}
               className="btn-collect-data"
               title="学習用タイル画像を収集"
+              disabled={isPlaying}
             >
               📊 学習データ収集
             </button>
@@ -737,6 +742,7 @@ function App() {
               onClick={() => setShowTrainingDialog(true)}
               className="btn-train-model"
               title="分類モデルを学習"
+              disabled={isPlaying}
             >
               🧠 モデル学習
             </button>
@@ -744,6 +750,7 @@ function App() {
               onClick={() => setShowModelConfigDialog(true)}
               className="btn-model-config"
               title="シーケンス生成用の分類モデルを設定"
+              disabled={isPlaying}
             >
               ⚙️ モデル設定
             </button>
@@ -751,6 +758,7 @@ function App() {
               onClick={() => setShowTileClassificationDialog(true)}
               className="btn-tile-classify"
               title="動画からタイル画像を抽出して分類"
+              disabled={isPlaying}
             >
               🔍 タイル分類
             </button>
@@ -1213,6 +1221,7 @@ function App() {
             }
           }}
           currentPlayingRow={currentPlayingRow}
+          isPlaying={isPlaying}
           sequenceButtons={sequenceButtons}
         />
       )}

@@ -54,6 +54,8 @@ fn test_model_metadata(model_path: &PathBuf) {
         Ok(metadata) => {
             println!("✓ モデルメタデータ読み込み成功:");
             print_metadata_info(&metadata);
+            // 学習データ内の全クラスラベルを出力（dir_* とボタン、others の順序確認）
+            println!("全クラスラベル: {:?}", metadata.all_class_labels);
         }
         Err(e) => {
             eprintln!("✗ エラー: {}", e);

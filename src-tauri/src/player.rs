@@ -125,8 +125,10 @@ impl Player {
     }
 
     // メインループから呼ばれる更新関数
+    // controller_opt が Some の場合はコントローラーへ入力を送信する。
+    // None の場合はコントローラー送信をスキップするが、再生進行自体は行う。
     // 戻り値: (コントローラーに送信したか, 状態が変化したか)
-    pub fn update(&mut self, controller: &mut Controller) -> Result<(bool, bool)> {
+    pub fn update(&mut self, controller_opt: Option<&mut Controller>) -> Result<(bool, bool)> {
         if self.state != SequenceState::Playing || self.frames.is_empty() {
             return Ok((false, false));
         }
@@ -142,7 +144,7 @@ impl Player {
 
         // 9. 開始時刻からの絶対経過時間で送信時刻を管理 (累積誤差を防ぐ)
         // 10. 現在時刻から次の送信時刻までの差分sleep (メインループが60FPSで呼ぶのでここではチェックのみ)
-        if elapsed >= self.next_step_time {
+            if elapsed >= self.next_step_time {
             // 5. コントローラの状態を現在のステップの入力状態に更新
             if self.current_step < self.frames.len() {
                 let frame = &self.frames[self.current_step];
@@ -161,7 +163,15 @@ impl Player {
                 mapped_frame.buttons = mapped_buttons;
 
                 // 6. コントローラの状態をドライバに送信
-                let _ = controller.update_input(&mapped_frame, self.invert_horizontal);
+                // コントローラーが渡されている場合のみ送信を行う
+                let mut sent = false;
+                if let Some(ctrl) = controller_opt {
+                    if ctrl.is_connected() {
+                        if ctrl.update_input(&mapped_frame, self.invert_horizontal).is_ok() {
+                            sent = true;
+                        }
+                    }
+                }
 
                 // 次のステップの送信時刻を開始時刻からの絶対時間で計算（現在のステップをインクリメントする前）
                 // 例: step0(3F) 送信後 → next_step_time = 0 + 3*1000/60 = 50ms
@@ -180,7 +190,7 @@ impl Player {
                 // 7. コントローラの内部状態を次のステップの状態に更新
                 self.current_step += 1;
 
-                return Ok((true, state_changed));
+                return Ok((sent, state_changed));
             } else if self.current_step >= self.frames.len() {
                 // 全てのステップを送信済みで、最後のステップのdurationも経過した
                 if self.loop_playback {
@@ -205,15 +215,23 @@ impl Player {
                         left_trigger: 0,
                         right_trigger: 0,
                     };
-                    let _ = controller.update_input(&neutral_frame, false);
-                    
+                    // コントローラがあれば中立入力を送信する
+                    let mut sent = false;
+                    if let Some(ctrl) = controller_opt {
+                        if ctrl.is_connected() {
+                            if ctrl.update_input(&neutral_frame, false).is_ok() {
+                                sent = true;
+                            }
+                        }
+                    }
+
                     self.state = SequenceState::Stopped;
                     self.current_step = 0;
                     self.sequence_start_time = None;
                     self.next_step_time = Duration::from_secs(0);
                     state_changed = true;
                     println!("[Player] 再生完了: 無入力送信後、停止状態に遷移");
-                    return Ok((true, state_changed)); // コントローラーに送信したのでtrue
+                    return Ok((sent, state_changed));
                 }
             }
         }

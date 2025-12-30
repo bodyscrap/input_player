@@ -12,6 +12,7 @@ interface SequenceEditorProps {
   onClose: (savedPath?: string) => void; // 保存されたパスを返す
   onSave?: (frames: InputFrame[]) => void; // 保存時にスロットを更新するコールバック
   currentPlayingRow: number | null; // 現在再生中の行(外部から制御)
+  isPlaying?: boolean; // 外部から再生状態を受け取り編集をブロックするためのフラグ
   sequenceButtons: string[]; // シーケンスで使用可能なボタンのリスト
   buttonOrder?: string[]; // ボタンの表示順序
 }
@@ -40,9 +41,11 @@ function SequenceEditor({
   const [localIsPlaying, setLocalIsPlaying] = useState(false);
   const [internalPlayingRow, setInternalPlayingRow] = useState<number>(-1);
 
-  // 再生中かどうかを判定（ローカル状態または外部状態）
+  // 再生中かどうかを判定（親コンポーネントからのプロップ優先）
   const isPlaying =
-    localIsPlaying || (currentPlayingRow !== null && currentPlayingRow >= 0);
+    (typeof (arguments[0] as any)?.isPlaying === "boolean"
+      ? (arguments[0] as any).isPlaying
+      : false) || localIsPlaying || (currentPlayingRow !== null && currentPlayingRow >= 0);
   // 表示用の行番号: internalPlayingRowが有効(-1以外)ならそれを使用、そうでなければcurrentPlayingRow
   const displayPlayingRow =
     internalPlayingRow >= 0 ? internalPlayingRow : currentPlayingRow;

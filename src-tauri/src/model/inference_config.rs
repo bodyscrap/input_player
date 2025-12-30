@@ -76,29 +76,19 @@ impl InferenceConfig {
 
     /// クラスインデックスからボタンラベルを取得
     ///
-    /// インデックスマッピング：
-    /// - 0-7: 方向キー（dir_1～dir_9）
-    /// - 8以降: ボタン + others
+    /// クラスインデックスからクラスラベルを取得
+    ///
+    /// メタデータの `all_class_labels` を直接参照することで、方向クラス数が
+    /// 可変でも正しくマッピングできるようにします。
     pub fn class_index_to_label(&self, index: usize) -> Option<String> {
-        if index < 8 {
-            // 方向キーの場合
-            let directions = ["dir_1", "dir_2", "dir_3", "dir_4", "dir_6", "dir_7", "dir_8", "dir_9"];
-            Some(directions[index].to_string())
-        } else if index < 8 + self.button_labels.len() {
-            // ボタンの場合
-            let button_idx = index - 8;
-            Some(self.button_labels[button_idx].clone())
-        } else if index == 8 + self.button_labels.len() {
-            // others
-            Some("others".to_string())
-        } else {
-            None
-        }
+        self.all_class_labels.get(index).cloned()
     }
 
     /// ボタンラベルからクラスインデックスを取得
+    ///
+    /// `all_class_labels` 内から直接検索してインデックスを返します。
     pub fn button_label_to_index(&self, label: &str) -> Option<usize> {
-        self.button_labels.iter().position(|l| l == label).map(|i| i + 8)
+        self.all_class_labels.iter().position(|l| l == label)
     }
 
     /// 設定情報を表示
