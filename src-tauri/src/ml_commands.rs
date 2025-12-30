@@ -116,15 +116,10 @@ pub fn extract_input_history(
     let tile_dir = temp_dir.join("tiles");
     fs::create_dir_all(&tile_dir).ok();
     
-    // CSV出力準備
-    let mut csv_writer = csv::Writer::from_path(&output_csv_path)
-        .map_err(|e| format!("CSV作成エラー: {}", e))?;
-    
-    // ヘッダー行を書き込み
+    // CSV出力はメモリ上でバッファしてから一括書き込みする
+    let mut csv_lines: Vec<String> = Vec::new();
     let mut header = vec!["duration".to_string(), "direction".to_string()];
     header.extend(button_labels.clone());
-    csv_writer.write_record(&header)
-        .map_err(|e| format!("CSVヘッダー書き込みエラー: {}", e))?;
     
     // 入力状態の履歴
     let mut previous_state: Option<InputState> = None;
@@ -154,36 +149,41 @@ pub fn extract_input_history(
             }).ok();
         }
         
-        // フレームから入力インジケータ領域のタイルを抽出
+        // フレームから入力インジケータ領域のタイルを抽出（メモリ上）
         let tiles = crate::analyzer::extract_tiles_from_image(frame_img, &region)
             .map_err(|e| anyhow::anyhow!("タイル抽出エラー: {}", e))?;
-        
-        // 各タイルを推論
+
+        // 入力状態を初期化
         let mut current_state = InputState::new();
-        
-        for (i, tile) in tiles.into_iter().enumerate() {
-            let tile_path = tile_dir.join(format!("tile_{}_{}.png", frame_num, i));
-            let dynamic_img = image::DynamicImage::ImageRgb8(tile);
-            save_as_uncompressed_png(&dynamic_img, &tile_path)
-                .map_err(|e| anyhow::anyhow!("タイル保存エラー: {}", e))?;
-            
-            // 推論実行（engineは同じスレッド内なのでSend不要）
-            let class_name = engine.classify_image(&tile_path)
-                .map_err(|e| anyhow::anyhow!("推論エラー: {}", e))?;
-            
-            // 入力状態に反映
-            crate::analyzer::update_input_state(&mut current_state, &class_name);
-            
-            // タイルを削除
-            fs::remove_file(&tile_path).ok();
+
+        // バッチサイズはモデルメタデータの列数を使用
+        let batch_size = engine.config().columns_per_row as usize;
+
+        if batch_size == 0 {
+            // フォールバック: 個別分類
+            for tile in tiles.into_iter() {
+                let class_name = engine.classify_image_direct(&tile)
+                    .map_err(|e| anyhow::anyhow!("推論エラー: {}", e))?;
+                crate::analyzer::update_input_state(&mut current_state, &class_name);
+            }
+        } else {
+            // チャンク毎にバッチ分類を行う
+            for chunk in tiles.chunks(batch_size) {
+                // chunk は &[image::RgbImage]
+                let labels = engine.classify_batch_from_images(chunk)
+                    .map_err(|e| anyhow::anyhow!("バッチ推論エラー: {}", e))?;
+
+                for class_name in labels.into_iter() {
+                    crate::analyzer::update_input_state(&mut current_state, &class_name);
+                }
+            }
         }
         
         // 状態が変化したらCSVに書き込み
         if let Some(ref prev) = previous_state {
             if prev != &current_state {
                 let line = prev.to_csv_line(duration, &button_labels);
-                csv_writer.write_record(line.split(','))
-                    .map_err(|e| anyhow::anyhow!("CSV書き込みエラー: {}", e))?;
+                csv_lines.push(line);
                 duration = 1;
             } else {
                 duration += 1;
@@ -197,13 +197,21 @@ pub fn extract_input_history(
         Ok(())
     }).map_err(|e| format!("フレーム処理エラー: {}", e))?;
     
-    // 最後の状態を書き込み
+    // 最後の状態をバッファに追加
     if let Some(ref state) = previous_state {
         let line: String = state.to_csv_line(duration, &button_labels);
+        csv_lines.push(line);
+    }
+
+    // バッファを書き出す（ヘッダー含む）
+    let mut csv_writer = csv::Writer::from_path(&output_csv_path)
+        .map_err(|e| format!("CSV作成エラー: {}", e))?;
+    csv_writer.write_record(&header)
+        .map_err(|e| format!("CSVヘッダー書き込みエラー: {}", e))?;
+    for line in csv_lines.into_iter() {
         csv_writer.write_record(line.split(','))
             .map_err(|e| format!("CSV書き込みエラー: {}", e))?;
     }
-    
     csv_writer.flush()
         .map_err(|e| format!("CSVフラッシュエラー: {}", e))?;
     
@@ -503,71 +511,117 @@ pub fn extract_and_classify_tiles(
             .map_err(|_| "バッファマップ失敗")?;
         let data = map.as_slice();
         
-        // 各タイルを切り出して分類
-        for row in 0..1 {  // 1行のみ（ボタンタイル）
-            for col in 0..metadata.columns_per_row {
-                let tile_x = metadata.tile_x as u32 + (col as u32 * metadata.tile_width as u32);
-                let tile_y = metadata.tile_y as u32 + (row as u32 * metadata.tile_height as u32);
-                
-                // 範囲チェック
-                if tile_x + metadata.tile_width as u32 > width || tile_y + metadata.tile_height as u32 > height {
-                    continue;
+        // 各タイルを切り出して分類（バッチ化）
+        // 1行分のタイルをまずメモリ上で収集
+        let mut frame_tiles: Vec<image::RgbImage> = Vec::with_capacity(metadata.columns_per_row as usize);
+        for col in 0..metadata.columns_per_row {
+            let tile_x = metadata.tile_x as u32 + (col as u32 * metadata.tile_width as u32);
+            let tile_y = metadata.tile_y as u32; // row == 0
+
+            if tile_x + metadata.tile_width as u32 > width || tile_y + metadata.tile_height as u32 > height {
+                // 範囲外はダミータイルを入れずスキップ
+                continue;
+            }
+
+            let mut tile_img = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
+                metadata.tile_width as u32,
+                metadata.tile_height as u32,
+            );
+
+            for ty in 0..metadata.tile_height as u32 {
+                for tx in 0..metadata.tile_width as u32 {
+                    let src_x = tile_x + tx;
+                    let src_y = tile_y + ty;
+                    let src_idx = ((src_y * width + src_x) * 3) as usize;
+
+                    if src_idx + 2 < data.len() {
+                        tile_img.put_pixel(
+                            tx,
+                            ty,
+                            Rgb([data[src_idx], data[src_idx + 1], data[src_idx + 2]]),
+                        );
+                    }
                 }
-                
-                // タイル画像を作成
-                let mut tile_img = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
-                    metadata.tile_width as u32,
-                    metadata.tile_height as u32
-                );
-                
-                for ty in 0..metadata.tile_height as u32 {
-                    for tx in 0..metadata.tile_width as u32 {
-                        let src_x = tile_x + tx;
-                        let src_y = tile_y + ty;
-                        let src_idx = ((src_y * width + src_x) * 3) as usize;
-                        
-                        if src_idx + 2 < data.len() {
-                            tile_img.put_pixel(
-                                tx,
-                                ty,
-                                Rgb([data[src_idx], data[src_idx + 1], data[src_idx + 2]])
-                            );
+            }
+
+            frame_tiles.push(tile_img);
+        }
+
+        // バッチサイズはモデルの列数
+        let batch_size = metadata.columns_per_row as usize;
+
+        // 全クラスラベル（出力時に使用）
+        let class_labels = if !metadata.all_class_labels.is_empty() {
+            &metadata.all_class_labels
+        } else {
+            &metadata.button_labels
+        };
+
+        if batch_size == 0 {
+            // フォールバック: 個別分類
+            for (i, tile) in frame_tiles.into_iter().enumerate() {
+                let class_idx = engine.predict_from_rgb_image(&tile)
+                    .map_err(|e| format!("分類エラー: {}", e))?;
+                let class_name = class_labels.get(class_idx)
+                    .ok_or(format!("クラスインデックス {} が範囲外（クラス数: {}）", class_idx, class_labels.len()))?;
+
+                let tile_id = i + 1;
+                let tile_filename = format!("{}_frame={}_tile={}.png", video_stem, frame_count, tile_id);
+                let tile_path = video_output_dir.join(class_name).join(&tile_filename);
+                let dynamic_img = image::DynamicImage::ImageRgb8(tile);
+                save_as_uncompressed_png(&dynamic_img, &tile_path)
+                    .map_err(|e| format!("タイル保存エラー: {}", e))?;
+                drop(dynamic_img);
+
+                *tile_count.entry(class_name.clone()).or_insert(0) += 1;
+                total_tiles += 1;
+            }
+        } else {
+            // チャンク毎にバッチ分類（WGPUなら真のバッチ、NdArrayはチャンク内個別分類にフォールバック）
+            for (chunk_idx, chunk) in frame_tiles.chunks(batch_size).enumerate() {
+                match &engine {
+                    InferenceEngine::Wgpu { .. } => {
+                        let labels = engine.classify_batch_from_images(chunk)
+                            .map_err(|e| format!("バッチ分類エラー: {}", e))?;
+
+                        for (j, class_name) in labels.into_iter().enumerate() {
+                            let tile_index = chunk_idx * batch_size + j;
+                            let tile_id = tile_index + 1;
+                            // 範囲チェック
+                            if tile_index >= frame_tiles.len() { continue; }
+
+                            let tile = &frame_tiles[tile_index];
+                            let tile_filename = format!("{}_frame={}_tile={}.png", video_stem, frame_count, tile_id);
+                            let tile_path = video_output_dir.join(&class_name).join(&tile_filename);
+                            let dynamic_img = image::DynamicImage::ImageRgb8(tile.clone());
+                            save_as_uncompressed_png(&dynamic_img, &tile_path)
+                                .map_err(|e| format!("タイル保存エラー: {}", e))?;
+                            drop(dynamic_img);
+
+                            *tile_count.entry(class_name.clone()).or_insert(0) += 1;
+                            total_tiles += 1;
+                        }
+                    }
+                    InferenceEngine::NdArray { .. } => {
+                        // CPUでは既存の個別推論をチャンク単位で実行
+                        for (j, tile) in chunk.iter().enumerate() {
+                            let tile_index = chunk_idx * batch_size + j;
+                            let class_name = engine.classify_image_direct(tile)
+                                .map_err(|e| format!("分類エラー: {}", e))?;
+
+                            let tile_id = tile_index + 1;
+                            let tile_filename = format!("{}_frame={}_tile={}.png", video_stem, frame_count, tile_id);
+                            let tile_path = video_output_dir.join(&class_name).join(&tile_filename);
+                            let dynamic_img = image::DynamicImage::ImageRgb8(tile.clone());
+                            save_as_uncompressed_png(&dynamic_img, &tile_path)
+                                .map_err(|e| format!("タイル保存エラー: {}", e))?;
+                            drop(dynamic_img);
+
+                            *tile_count.entry(class_name.clone()).or_insert(0) += 1;
+                            total_tiles += 1;
                         }
                     }
                 }
-                
-                // 分類実行
-                let class_idx = engine.predict_from_rgb_image(&tile_img)
-                    .map_err(|e| format!("分類エラー: {}", e))?;
-                
-                // 全クラスラベルから取得（all_class_labelsが空の場合はbutton_labelsにフォールバック）
-                let class_labels = if !metadata.all_class_labels.is_empty() {
-                    &metadata.all_class_labels
-                } else {
-                    &metadata.button_labels
-                };
-                
-                let class_name = class_labels.get(class_idx)
-                    .ok_or(format!("クラスインデックス {} が範囲外（クラス数: {}）", class_idx, class_labels.len()))?;
-                
-                // タイルIDは左から右へ順に1から始まる
-                let tile_id = col + 1;
-                
-                // ファイル名形式: {動画名}_frame={フレーム番号}_tile={タイルID}.png
-                let tile_filename = format!("{}_frame={}_tile={}.png", video_stem, frame_count, tile_id);
-                let tile_path = video_output_dir.join(class_name).join(&tile_filename);
-                
-                // タイル保存（非圧縮PNG）
-                let dynamic_img = image::DynamicImage::ImageRgb8(tile_img);
-                save_as_uncompressed_png(&dynamic_img, &tile_path)
-                    .map_err(|e| format!("タイル保存エラー: {}", e))?;
-                
-                // タイル画像を明示的に解放
-                drop(dynamic_img);
-                
-                // カウント更新
-                *tile_count.entry(class_name.clone()).or_insert(0) += 1;
-                total_tiles += 1;
             }
         }
     }

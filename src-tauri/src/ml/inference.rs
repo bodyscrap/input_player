@@ -275,6 +275,118 @@ impl InferenceEngine {
         Ok(results)
     }
 
+    /// バッチ画像（RGB画像群）をまとめて分類
+    /// images の長さがバッチサイズになります。モデルのメタデータに基づく
+    /// 列数などをバッチサイズとして使用してください。
+    pub fn classify_batch_from_images(&self, images: &[image::RgbImage]) -> Result<Vec<String>> {
+        if images.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        match self {
+            Self::Wgpu { model, config, device } => {
+                let img_size = config.model_input_size as usize;
+                let batch = images.len();
+                let mut normalized = Vec::with_capacity(batch * 3 * img_size * img_size);
+
+                for img in images {
+                    let resized = image::imageops::resize(img, img_size as u32, img_size as u32, image::imageops::FilterType::Lanczos3);
+                    for channel in 0..3 {
+                        for y in 0..img_size {
+                            for x in 0..img_size {
+                                let pixel = resized.get_pixel(x as u32, y as u32);
+                                let value = pixel[channel] as f32 / 255.0;
+                                let mean = [0.485f32, 0.456f32, 0.406f32];
+                                let std = [0.229f32, 0.224f32, 0.225f32];
+                                let normalized_value = (value - mean[channel]) / std[channel];
+                                normalized.push(normalized_value);
+                            }
+                        }
+                    }
+                }
+
+                let tensor = Tensor::<Wgpu, 1>::from_floats(normalized.as_slice(), device)
+                    .reshape([batch, 3, img_size, img_size]);
+
+                let output = model.forward(tensor);
+                let predicted = output.argmax(1);
+                // 出力の整数型はバックエンドや環境で異なることがあるため、
+                // まず i64 を試し、失敗したら i32 を試すフォールバックを行う。
+                let mut results = Vec::new();
+
+                // cloneしてi64を試す
+                let predicted_clone = predicted.clone();
+                match predicted_clone.into_data().to_vec::<i64>() {
+                    Ok(vec_i64) => {
+                        for idx in vec_i64 {
+                            let class_idx = idx as usize;
+                            let class_name = config.class_index_to_label(class_idx)
+                                .ok_or_else(|| anyhow::anyhow!("クラスインデックス {} は範囲外です", class_idx))?;
+                            results.push(class_name);
+                        }
+                        return Ok(results);
+                    }
+                    Err(_) => {
+                        // i32 を試す
+                        let vec_i32 = predicted
+                            .into_data()
+                            .to_vec::<i32>()
+                            .map_err(|e| anyhow::anyhow!("推論結果の取得エラー: {:?}", e))?;
+                        for idx in vec_i32 {
+                            let class_idx = idx as usize;
+                            let class_name = config.class_index_to_label(class_idx)
+                                .ok_or_else(|| anyhow::anyhow!("クラスインデックス {} は範囲外です", class_idx))?;
+                            results.push(class_name);
+                        }
+                        return Ok(results);
+                    }
+                }
+            }
+            Self::NdArray { model, config } => {
+                let img_size = config.model_input_size as usize;
+                let batch = images.len();
+                let mut normalized = Vec::with_capacity(batch * 3 * img_size * img_size);
+
+                for img in images {
+                    let resized = image::imageops::resize(img, img_size as u32, img_size as u32, image::imageops::FilterType::Lanczos3);
+                    for channel in 0..3 {
+                        for y in 0..img_size {
+                            for x in 0..img_size {
+                                let pixel = resized.get_pixel(x as u32, y as u32);
+                                let value = pixel[channel] as f32 / 255.0;
+                                let mean = [0.485f32, 0.456f32, 0.406f32];
+                                let std = [0.229f32, 0.224f32, 0.225f32];
+                                let normalized_value = (value - mean[channel]) / std[channel];
+                                normalized.push(normalized_value);
+                            }
+                        }
+                    }
+                }
+
+                let device = NdArrayDevice::Cpu;
+                let tensor = Tensor::<NdArray, 1>::from_floats(normalized.as_slice(), &device)
+                    .reshape([batch, 3, img_size, img_size]);
+
+                let output = model.forward(tensor);
+                let predicted = output.argmax(1);
+                let class_idxs = predicted
+                    .into_data()
+                    .to_vec::<i32>()
+                    .map_err(|e| anyhow::anyhow!("推論結果の取得エラー: {:?}", e))?;
+
+                let mut results = Vec::with_capacity(class_idxs.len());
+                for idx in class_idxs {
+                    let class_idx = idx as usize;
+                    let class_name = config.class_index_to_label(class_idx)
+                        .ok_or_else(|| anyhow::anyhow!("クラスインデックス {} は範囲外です", class_idx))?;
+                    results.push(class_name);
+                }
+
+                Ok(results)
+            }
+        }
+    }
+
     /// RGB画像から直接分類（クラスインデックスを返す）
     pub fn predict_from_rgb_image(&self, image: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>) -> Result<usize> {
         match self {
