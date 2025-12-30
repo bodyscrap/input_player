@@ -79,16 +79,12 @@ impl FrameExtractor {
             anyhow::bail!("動画ファイルにアクセスできません: {:?} ({})", video_path, e);
         }
         
-        let uri = format!(
-            "file:///{}",
-            video_path
-                .canonicalize()
-                .context("動画ファイルのパスを解決できませんでした")?
-                .to_str()
-                .unwrap()
-                .replace("\\", "/")
-                .trim_start_matches("\\\\?\\")
-        );
+        let canonical = video_path
+            .canonicalize()
+            .context("動画ファイルのパスを解決できませんでした")?;
+        let uri = url::Url::from_file_path(&canonical)
+            .map_err(|_| anyhow::anyhow!("ファイルパスからURIへの変換に失敗しました"))?
+            .to_string();
 
         // Discovererを使って動画情報を取得
         let discoverer = gstreamer_pbutils::Discoverer::new(gst::ClockTime::from_seconds(10))
@@ -158,15 +154,10 @@ impl FrameExtractor {
         println!("  FPS: {:.2}", info.fps);
         println!("  再生時間: {:.2}秒", info.duration_sec);
 
-        let _uri = format!(
-            "file:///{}",
-            video_path
-                .canonicalize()?
-                .to_str()
-                .unwrap()
-                .replace("\\", "/")
-                .trim_start_matches("\\\\?\\")
-        );
+        let _canonical = video_path.canonicalize()?;
+        let _uri = url::Url::from_file_path(&_canonical)
+            .map_err(|_| anyhow::anyhow!("ファイルパスからURIへの変換に失敗しました"))?
+            .to_string();
 
         // GStreamerパイプラインを構築
         let pipeline = gst::Pipeline::new();
@@ -205,8 +196,9 @@ impl FrameExtractor {
         appsink.set_property("emit-signals", false);
         appsink.set_property("sync", false);
 
-        // ファイルパスを設定
-        source.set_property("location", video_path.to_str().unwrap());
+        // ファイルパスを設定（正規化した絶対パスを使用）
+        let source_path = video_path.canonicalize()?;
+        source.set_property("location", source_path.to_str().unwrap());
 
         // パイプラインにエレメントを追加
         pipeline
@@ -463,7 +455,8 @@ impl FrameExtractor {
         appsink.set_property("emit-signals", false);
         appsink.set_property("sync", false);
 
-        source.set_property("location", video_path.to_str().unwrap());
+        let source_path = video_path.canonicalize()?;
+        source.set_property("location", source_path.to_str().unwrap());
 
         pipeline
             .add_many(&[&source, &decodebin, &videoconvert, appsink.upcast_ref::<gst::Element>()])
@@ -618,8 +611,9 @@ impl FrameExtractor {
         // GStreamerパイプラインを構築
         let pipeline = gst::Pipeline::new();
 
+        let canonical = video_path.canonicalize()?;
         let source = ElementFactory::make("filesrc")
-            .property("location", video_path.to_str().unwrap())
+            .property("location", canonical.to_str().unwrap())
             .build()
             .context("filesrcの作成に失敗しました")?;
 

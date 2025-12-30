@@ -37,6 +37,9 @@ gstreamer-app = "0.23"
 gstreamer-video = "0.23"
 gstreamer-pbutils = "0.23"
 
+# file path -> URI
+url = "2"
+
 # 画像処理
 image = "0.25"
 
