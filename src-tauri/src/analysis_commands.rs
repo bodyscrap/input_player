@@ -168,6 +168,10 @@ pub fn collect_training_data(
     frame_interval: u32,
     region: AnalysisRegion,
 ) -> Result<ExtractTilesResponse, String> {
+    // validate frame_interval
+    if frame_interval == 0 {
+        return Err("frame_interval must be >= 1".to_string());
+    }
     use gstreamer_video as gst_video;
     use image::{ImageBuffer, Rgb};
     
@@ -186,12 +190,25 @@ pub fn collect_training_data(
         .unwrap_or("video")
         .to_string();
     
-    // パイプラインを構築
+    // 動画情報を取得して videocrop のパラメータを計算
+    let info = FrameExtractor::get_video_info(&video_path)
+        .map_err(|e| format!("動画情報取得に失敗: {}", e))?;
+
+    let left = region.x as i32;
+    let top = region.y as i32;
+    let crop_w = region.tile_width * region.columns;
+    let crop_h = region.tile_height * region.rows;
+    let right = (info.width as i32) - (left + crop_w as i32);
+    let bottom = (info.height as i32) - (top + crop_h as i32);
+    let right = if right < 0 { 0 } else { right };
+    let bottom = if bottom < 0 { 0 } else { bottom };
+
+    // パイプラインを構築（事前に領域全体を videocrop で切り出す）
     let pipeline = format!(
-        "filesrc location=\"{}\" ! decodebin ! videoconvert ! video/x-raw,format=RGB ! appsink name=sink",
-        video_path.replace("\\", "/")
+        "filesrc location=\"{}\" ! decodebin ! videoconvert ! videocrop left={} right={} top={} bottom={} ! video/x-raw,format=RGB ! appsink name=sink",
+        video_path.replace("\\", "/"), left, right, top, bottom
     );
-    
+
     let pipeline = gst::parse::launch(&pipeline)
         .map_err(|e| format!("パイプライン構築失敗: {}", e))?;
     let pipeline = pipeline
@@ -237,12 +254,20 @@ pub fn collect_training_data(
                 .map_err(|_| "バッファマップ失敗")?;
             
             let data = map.as_slice();
-            
             // タイルを切り出して保存
+            // 行のバイト幅（stride）を考慮
+            let stride_vals = video_info.stride();
+            let stride = if let Some(&s) = stride_vals.get(0) {
+                let s = if s < 0 { -s } else { s };
+                s as usize
+            } else {
+                (width as usize) * 3
+            };
             for row in 0..region.rows {
                 for col in 0..region.columns {
-                    let tile_x = region.x + (col * region.tile_width);
-                    let tile_y = region.y + (row * region.tile_height);
+                    // videocrop により既に領域全体が切り出されているので origin は 0,0
+                    let tile_x = col * region.tile_width;
+                    let tile_y = row * region.tile_height;
                     
                     // 範囲チェック
                     if tile_x + region.tile_width > width || tile_y + region.tile_height > height {
@@ -259,14 +284,14 @@ pub fn collect_training_data(
                         for tx in 0..region.tile_width {
                             let src_x = tile_x + tx;
                             let src_y = tile_y + ty;
-                            let src_idx = ((src_y * width + src_x) * 3) as usize;
-                            
+                            let src_idx = (src_y as usize * stride) + (src_x as usize * 3);
+
                             if src_idx + 2 < data.len() {
-                                tile_img.put_pixel(
-                                    tx,
-                                    ty,
-                                    Rgb([data[src_idx], data[src_idx + 1], data[src_idx + 2]])
-                                );
+                                tile_img.put_pixel(tx, ty, Rgb([
+                                    data[src_idx],
+                                    data[src_idx + 1],
+                                    data[src_idx + 2],
+                                ]));
                             }
                         }
                     }
@@ -312,61 +337,69 @@ pub fn extract_tiles_from_video(
     frame_interval: u32,
     region: AnalysisRegion,
 ) -> Result<ExtractTilesResponse, String> {
-    let config = FrameExtractorConfig {
-        frame_interval,
-        output_dir: PathBuf::from("temp/frames"),
-        image_format: "png".to_string(),
-        jpeg_quality: 95,
-    };
-    
-    let extractor = FrameExtractor::new(config);
-    
-    // フレームを抽出
-    let frame_paths = extractor.extract_frames(&video_path)
-        .map_err(|e| format!("フレーム抽出に失敗: {}", e))?;
-    
+    if frame_interval == 0 {
+        return Err("frame_interval must be >= 1".to_string());
+    }
+    // 出力ディレクトリを作成
     let output_path = PathBuf::from(&output_dir);
     std::fs::create_dir_all(&output_path)
         .map_err(|e| format!("出力ディレクトリの作成に失敗: {}", e))?;
-    
-    let mut tile_count = 0;
-    let frame_count = frame_paths.len() as u32;
-    
-    // 各フレームからタイルを切り出し
-    for (frame_idx, frame_path) in frame_paths.iter().enumerate() {
-        let img = image::open(frame_path)
-            .map_err(|e| format!("画像を開けません: {}", e))?;
-        
-        let tile_width = region.tile_width;
-        let tile_height = region.tile_height;
-        
-        for row in 0..region.rows {
-            for col in 0..region.columns {
-                let x = region.x + (col * tile_width);
-                let y = region.y + (row * tile_height);
-                
-                // 画像範囲チェック
-                if x + tile_width > img.width() || y + tile_height > img.height() {
+
+    // クロップ領域（領域全体）を計算
+    let crop_region = crate::analyzer::InputIndicatorRegion {
+        x: region.x,
+        y: region.y,
+        width: region.tile_width * region.columns,
+        height: region.tile_height * region.rows,
+        rows: region.rows,
+        cols: region.columns,
+    };
+
+    let frame_config = FrameExtractorConfig {
+        frame_interval,
+        output_dir: PathBuf::from("."), // 使用しない
+        image_format: "png".to_string(),
+        jpeg_quality: 95,
+    };
+
+    let extractor = FrameExtractor::new(frame_config);
+
+    let mut tile_count: usize = 0;
+    let mut frame_count: u32 = 0;
+
+    // フレームを同期処理し、クロップ済み画像からタイルを保存
+    extractor.process_frames_sync_with_crop(&video_path, Some(crop_region.clone()), |frame_img, frame_num| {
+        // frame_img は crop_region サイズの画像
+        frame_count = frame_num + 1;
+
+        // 列ごとにタイルを切り出して保存
+        for row in 0..crop_region.rows {
+            for col in 0..crop_region.cols {
+                let x = col * region.tile_width;
+                let y = row * region.tile_height;
+
+                // 範囲チェック（念のため）
+                if x + region.tile_width > frame_img.width() || y + region.tile_height > frame_img.height() {
                     continue;
                 }
-                
-                let tile = img.crop_imm(x, y, tile_width, tile_height);
-                
-                // タイルを保存（ファイル名に位置情報を含める）
-                let tile_filename = format!("tile_f{:06}_r{}_c{}.png", frame_idx, row, col);
+
+                let tile = image::imageops::crop_imm(&mut frame_img.clone(), x, y, region.tile_width, region.tile_height).to_image();
+
+                let tile_filename = format!("tile_f{:06}_r{}_c{}.png", frame_num, row, col);
                 let tile_path = output_path.join(&tile_filename);
-                
-                save_as_uncompressed_png(&tile, &tile_path)
-                    .map_err(|e| format!("タイル保存に失敗: {}", e))?;
-                
+
+                let dynamic_img = image::DynamicImage::ImageRgb8(tile);
+                save_as_uncompressed_png(&dynamic_img, &tile_path)
+                    .map_err(|e| anyhow::anyhow!("タイル保存に失敗: {}", e))?;
+
                 tile_count += 1;
             }
         }
-        
-        // 元のフレームを削除
-        std::fs::remove_file(frame_path).ok();
-    }
-    
+
+        // テスト用途では無限ループ防止等は呼び出し側で制御する
+        Ok(())
+    }).map_err(|e| format!("フレーム処理エラー: {}", e))?;
+
     Ok(ExtractTilesResponse {
         tile_count,
         frame_count,

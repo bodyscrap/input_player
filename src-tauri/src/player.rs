@@ -1,5 +1,5 @@
 use crate::controller::Controller;
-use crate::types::{InputFrame, SequenceState, SequenceEvent};
+use crate::types::{InputFrame, SequenceState};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -108,20 +108,10 @@ impl Player {
         self.fps = fps;
     }
 
-    pub fn is_playing(&self) -> bool {
-        self.state == SequenceState::Playing
-    }
+    // `is_playing` removed (unused); use `get_state()` where needed.
 
     pub fn get_state(&self) -> SequenceState {
         self.state
-    }
-
-    pub fn get_event(&self) -> SequenceEvent {
-        SequenceEvent {
-            state: self.state,
-            current_step: self.current_step,
-            total_steps: self.frames.len(),
-        }
     }
 
     // メインループから呼ばれる更新関数

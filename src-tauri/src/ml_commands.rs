@@ -137,7 +137,8 @@ pub fn extract_input_history(
     let extractor = FrameExtractor::new(frame_config);
     
     // 同期処理: フレーム抽出とタイル推論を同じスレッド内で実行
-    extractor.process_frames_sync(&video_path, |frame_img, frame_num| {
+    // 事前に領域全体を videocrop で切り出してから AppSink で処理する
+    extractor.process_frames_sync_with_crop(&video_path, Some(region.clone()), |frame_img, frame_num| {
         total_frames = frame_num + 1;
         
         // 30フレームごとに進捗通知
@@ -149,8 +150,18 @@ pub fn extract_input_history(
             }).ok();
         }
         
-        // フレームから入力インジケータ領域のタイルを抽出（メモリ上）
-        let tiles = crate::analyzer::extract_tiles_from_image(frame_img, &region)
+        // AppSinkに渡される画像は既に領域全体でクロップ済みなので、
+        // 切り出し後の画像上で列ごとにタイルを抽出する（x=0,y=0開始）
+        let cropped_region = crate::analyzer::InputIndicatorRegion {
+            x: 0,
+            y: 0,
+            width: region.width,
+            height: region.height,
+            rows: region.rows,
+            cols: region.cols,
+        };
+
+        let tiles = crate::analyzer::extract_tiles_from_image(frame_img, &cropped_region)
             .map_err(|e| anyhow::anyhow!("タイル抽出エラー: {}", e))?;
 
         // 入力状態を初期化
@@ -510,6 +521,15 @@ pub fn extract_and_classify_tiles(
         let map = buffer.map_readable()
             .map_err(|_| "バッファマップ失敗")?;
         let data = map.as_slice();
+        // 行のバイト幅（stride）を取得して、パディングを考慮したオフセット計算を行う
+        let stride_vals = video_info.stride(); // returns &[i32]
+        let stride = if let Some(&s) = stride_vals.get(0) {
+            let s = if s < 0 { -s } else { s };
+            s as usize
+        } else {
+            // フォールバック: 幅 * 3
+            (width as usize) * 3
+        };
         
         // 各タイルを切り出して分類（バッチ化）
         // 1行分のタイルをまずメモリ上で収集
@@ -532,14 +552,14 @@ pub fn extract_and_classify_tiles(
                 for tx in 0..metadata.tile_width as u32 {
                     let src_x = tile_x + tx;
                     let src_y = tile_y + ty;
-                    let src_idx = ((src_y * width + src_x) * 3) as usize;
+                    let src_idx = (src_y as usize * stride) + (src_x as usize * 3);
 
                     if src_idx + 2 < data.len() {
-                        tile_img.put_pixel(
-                            tx,
-                            ty,
-                            Rgb([data[src_idx], data[src_idx + 1], data[src_idx + 2]]),
-                        );
+                        tile_img.put_pixel(tx, ty, Rgb([
+                            data[src_idx],
+                            data[src_idx + 1],
+                            data[src_idx + 2],
+                        ]));
                     }
                 }
             }
@@ -997,7 +1017,7 @@ pub async fn mp4_to_sequence(
     
     // 同期処理: フレーム抽出とタイル推論を同じスレッド内で実行
     println!("[MP4→CSV] process_frames_sync 呼び出し開始");
-    extractor.process_frames_sync(&video_path, |frame_img, frame_num| {
+    extractor.process_frames_sync_with_crop(&video_path, Some(region.clone()), |frame_img, frame_num| {
         total_frames = frame_num + 1;
         
         // 最初のフレームで確認ログ
@@ -1017,11 +1037,20 @@ pub async fn mp4_to_sequence(
                 (frame_num as f32 / estimated_total_frames as f32 * 100.0) as u32),
         }).ok();
         
-        // フレームから入力インジケータ領域のタイルを抽出
+        // AppSinkに渡される画像は既に領域全体でクロップ済み
+        let cropped_region = crate::analyzer::InputIndicatorRegion {
+            x: 0,
+            y: 0,
+            width: region.width,
+            height: region.height,
+            rows: region.rows,
+            cols: region.cols,
+        };
+
         if frame_num == 0 {
-            println!("[MP4→CSV] フレーム0: タイル抽出開始");
+            println!("[MP4→CSV] フレーム0: タイル抽出開始 (クロップ済み画像)");
         }
-        let tiles = crate::analyzer::extract_tiles_from_image(frame_img, &region)
+        let tiles = crate::analyzer::extract_tiles_from_image(frame_img, &cropped_region)
             .map_err(|e| anyhow::anyhow!("タイル抽出エラー: {}", e))?;
         if frame_num == 0 {
             println!("[MP4→CSV] フレーム0: タイル抽出完了 ({}個)", tiles.len());

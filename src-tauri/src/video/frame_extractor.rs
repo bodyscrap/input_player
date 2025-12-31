@@ -6,6 +6,37 @@ use image::{ImageBuffer, Rgb};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+// 指定された VideoInfo と元データ（stride を含む可能性あり）から
+// 連続した RGB バイト列を作成して返す。
+fn plane_to_contiguous_rgb(video_info: &gstreamer_video::VideoInfo, src: &[u8]) -> Vec<u8> {
+    let width = video_info.width() as usize;
+    let height = video_info.height() as usize;
+    // stride() は行バイト幅のスライスを返す（通常は1要素）
+    let stride = video_info.stride().get(0).cloned().unwrap_or((width * 3) as i32) as usize;
+
+    // stride が期待どおりならそのままコピー
+    if stride == width * 3 {
+        return src.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(width * 3 * height);
+    for row in 0..height {
+        let start = row * stride;
+        let end = start + width * 3;
+        if end <= src.len() {
+            out.extend_from_slice(&src[start..end]);
+        } else if start < src.len() {
+            // 不足している場合は残りをコピーしてゼロ埋め
+            out.extend_from_slice(&src[start..src.len()]);
+            out.extend(std::iter::repeat(0).take(end - src.len()));
+        } else {
+            out.extend(std::iter::repeat(0).take(width * 3));
+        }
+    }
+
+    out
+}
+
 /// フレーム抽出の設定
 #[derive(Debug, Clone)]
 pub struct FrameExtractorConfig {
@@ -122,7 +153,12 @@ impl FrameExtractor {
     }
 
     /// 動画からフレームを抽出（進捗コールバック付き）
-    pub fn extract_frames_with_progress<P, F>(&self, video_path: P, progress_callback: Option<F>) -> Result<Vec<PathBuf>>
+    pub fn extract_frames_with_progress<P, F>(
+        &self,
+        video_path: P,
+        progress_callback: Option<F>,
+        crop_region: Option<crate::analyzer::InputIndicatorRegion>,
+    ) -> Result<Vec<PathBuf>>
     where
         P: AsRef<Path>,
         F: Fn(usize) + Send + Sync + 'static,
@@ -201,19 +237,69 @@ impl FrameExtractor {
         source.set_property("location", source_path.to_str().unwrap());
 
         // パイプラインにエレメントを追加
-        pipeline
-            .add_many(&[&source, &decodebin, &videoconvert, appsink.upcast_ref::<gst::Element>()])
+        // source と decodebin の追加は共通
+        // videocrop を使う場合は videocrop をパイプラインに挿入して
+        // videoconvert -> videocrop -> appsink の形にする
+        if let Some(region) = &crop_region {
+            let videocrop = ElementFactory::make("videocrop")
+                .name("crop")
+                .build()
+                .context("videocrop の作成に失敗しました")?;
+
+            // crop の値を計算
+            let video_w = info.width as i32;
+            let video_h = info.height as i32;
+            let left = region.x as i32;
+            let top = region.y as i32;
+            let right = (video_w - (region.x as i32 + region.width as i32)).max(0);
+            let bottom = (video_h - (region.y as i32 + region.height as i32)).max(0);
+
+            videocrop.set_property("left", left);
+            videocrop.set_property("top", top);
+            videocrop.set_property("right", right);
+            videocrop.set_property("bottom", bottom);
+
+            pipeline.add_many(&[
+                &source,
+                &decodebin,
+                &videoconvert,
+                videocrop.upcast_ref::<gst::Element>(),
+                appsink.upcast_ref::<gst::Element>(),
+            ])
             .context("エレメントの追加に失敗しました")?;
 
-        // sourceとdecodebinをリンク
-        source
-            .link(&decodebin)
-            .context("sourceとdecoderのリンクに失敗しました")?;
+            // source と decodebin をリンク
+            source
+                .link(&decodebin)
+                .context("sourceとdecoderのリンクに失敗しました")?;
 
-        // videoconvertとappsinkをリンク
-        videoconvert
-            .link(appsink.upcast_ref::<gst::Element>())
-            .context("converterとsinkのリンクに失敗しました")?;
+            // videoconvert -> videocrop -> appsink をリンク
+            videoconvert
+                .link(videocrop.upcast_ref::<gst::Element>())
+                .context("converterとvideocropのリンクに失敗しました")?;
+            videocrop
+                .link(appsink.upcast_ref::<gst::Element>())
+                .context("videocropとsinkのリンクに失敗しました")?;
+        } else {
+            pipeline
+                .add_many(&[
+                    &source,
+                    &decodebin,
+                    &videoconvert,
+                    appsink.upcast_ref::<gst::Element>(),
+                ])
+                .context("エレメントの追加に失敗しました")?;
+
+            // sourceとdecodebinをリンク
+            source
+                .link(&decodebin)
+                .context("sourceとdecoderのリンクに失敗しました")?;
+
+            // videoconvertとappsinkをリンク
+            videoconvert
+                .link(appsink.upcast_ref::<gst::Element>())
+                .context("converterとsinkのリンクに失敗しました")?;
+        }
 
         // decodebinの動的パッドをリンク
         let videoconvert_clone = videoconvert.clone();
@@ -272,9 +358,10 @@ impl FrameExtractor {
                         let width = video_info.width() as u32;
                         let height = video_info.height() as u32;
 
-                        // RGB画像として保存
+                        // RGB画像として保存（stride に対応して連続バッファを作成）
+                        let contiguous = plane_to_contiguous_rgb(&video_info, map.as_slice());
                         if let Some(img_buffer) =
-                            ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, map.as_slice())
+                            ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, contiguous)
                         {
                             let filename = format!("frame_{:06}.{}", current_frame, config.image_format);
                             let output_path = config.output_dir.join(&filename);
@@ -376,7 +463,7 @@ impl FrameExtractor {
 
     /// 動画からフレームを抽出
     pub fn extract_frames<P: AsRef<Path>>(&self, video_path: P) -> Result<Vec<PathBuf>> {
-        self.extract_frames_with_progress(video_path, None::<fn(usize)>)
+        self.extract_frames_with_progress(video_path, None::<fn(usize)>, None)
     }
 
     /// 動画からフレームを1つずつコールバックで処理
@@ -515,8 +602,8 @@ impl FrameExtractor {
                         let width = video_info.width() as u32;
                         let height = video_info.height() as u32;
 
-                        let data = map.as_slice();
-                        let img = image::RgbImage::from_raw(width, height, data.to_vec())
+                        let contiguous = plane_to_contiguous_rgb(&video_info, map.as_slice());
+                        let img = image::RgbImage::from_raw(width, height, contiguous)
                             .ok_or(gst::FlowError::Error)?;
 
                         let output_filename = format!("frame_{:08}.{}", current_frame, config.image_format);
@@ -691,16 +778,33 @@ impl FrameExtractor {
                         ) {
                             // 画像を保存
                             let frame_data = map.as_slice();
-                            if let Some(img) = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(
-                                width as u32,
-                                height as u32,
-                                frame_data.to_vec(),
-                            ) {
-                                let output_path = self.config.output_dir.join(format!("frame_{:06}.png", frame_number));
-                                if let Ok(_) = img.save(&output_path) {
-                                    output_paths_clone.lock().unwrap().push(output_path);
+                            // caps から VideoInfo を作成して stride を考慮してコピー
+                            if let Ok(video_info2) = gstreamer_video::VideoInfo::from_caps(&caps) {
+                                let contiguous = plane_to_contiguous_rgb(&video_info2, frame_data);
+                                if let Some(img) = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(
+                                    width as u32,
+                                    height as u32,
+                                    contiguous,
+                                ) {
+                                    let output_path = self.config.output_dir.join(format!("frame_{:06}.png", frame_number));
+                                    if let Ok(_) = img.save(&output_path) {
+                                        output_paths_clone.lock().unwrap().push(output_path);
+                                    }
+                                }
+                            } else {
+                                // VideoInfo 作成失敗時は従来どおり直接保存
+                                if let Some(img) = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(
+                                    width as u32,
+                                    height as u32,
+                                    frame_data.to_vec(),
+                                ) {
+                                    let output_path = self.config.output_dir.join(format!("frame_{:06}.png", frame_number));
+                                    if let Ok(_) = img.save(&output_path) {
+                                        output_paths_clone.lock().unwrap().push(output_path);
+                                    }
                                 }
                             }
+                            
                         }
                     }
                 }
@@ -900,8 +1004,210 @@ impl FrameExtractor {
                     let width = video_info.width() as u32;
                     let height = video_info.height() as u32;
 
-                    let data = map.as_slice();
-                    let img = image::RgbImage::from_raw(width, height, data.to_vec())
+                    let contiguous = plane_to_contiguous_rgb(&video_info, map.as_slice());
+                    let img = image::RgbImage::from_raw(width, height, contiguous)
+                        .context("RgbImageの作成に失敗しました")?;
+
+                    // コールバックを同期的に呼び出し（同じスレッド内）
+                    callback(&img, current_frame)?;
+
+                    processed_count += 1;
+
+                    if processed_count % 30 == 0 {
+                        println!("処理済み: {}フレーム", processed_count);
+                    }
+                }
+            }
+        }
+
+        pipeline.set_state(gst::State::Null)
+            .context("パイプラインの停止に失敗しました")?;
+
+        println!("\n処理完了!");
+        println!("  総フレーム数: {}", frame_count);
+        println!("  処理フレーム数: {}", processed_count);
+
+        Ok(())
+    }
+
+    /// 動画をクロップしてからフレームを同期的に処理する
+    ///
+    /// `crop_region` が Some の場合、GStreamer パイプラインに `videocrop` を挿入し、
+    /// 指定領域を先に切り出してから AppSink に渡します。AppSink に渡される画像は
+    /// 切り出し後の領域（幅 = crop_region.width, 高さ = crop_region.height）になります。
+    pub fn process_frames_sync_with_crop<P, F>(
+        &self,
+        video_path: P,
+        crop_region: Option<crate::analyzer::InputIndicatorRegion>,
+        mut callback: F,
+    ) -> Result<()>
+    where
+        P: AsRef<Path>,
+        F: FnMut(&image::RgbImage, u32) -> Result<()>,
+    {
+        Self::init_gstreamer()?;
+
+        let video_path = video_path.as_ref();
+        println!("動画ファイルを開いています: {}", video_path.display());
+
+        // 動画情報を取得
+        let info = Self::get_video_info(video_path)?;
+        println!("動画情報:");
+        println!("  解像度: {}x{}", info.width, info.height);
+        println!("  FPS: {:.2}", info.fps);
+        println!("  再生時間: {:.2}秒", info.duration_sec);
+
+        // GStreamerパイプラインを構築
+        let pipeline = gst::Pipeline::new();
+
+        let source = ElementFactory::make("filesrc")
+            .name("source")
+            .build()
+            .context("filesrcの作成に失敗しました")?;
+
+        let decodebin = ElementFactory::make("decodebin")
+            .name("decoder")
+            .build()
+            .context("decodebinの作成に失敗しました")?;
+
+        let videoconvert = ElementFactory::make("videoconvert")
+            .name("converter")
+            .build()
+            .context("videoconvertの作成に失敗しました")?;
+
+        // videocrop はオプションで追加
+        let videocrop = if crop_region.is_some() {
+            Some(
+                ElementFactory::make("videocrop")
+                    .name("crop")
+                    .build()
+                    .context("videocropの作成に失敗しました")?,
+            )
+        } else {
+            None
+        };
+
+        let appsink = ElementFactory::make("appsink")
+            .name("sink")
+            .build()
+            .context("appsinkの作成に失敗しました")?;
+
+        let appsink = appsink
+            .dynamic_cast::<AppSink>()
+            .map_err(|_| anyhow::anyhow!("appsinkへのキャストに失敗しました"))?;
+
+        appsink.set_caps(Some(
+            &gst::Caps::builder("video/x-raw").field("format", "RGB").build(),
+        ));
+        appsink.set_property("emit-signals", false);
+        appsink.set_property("sync", false);
+        appsink.set_property("max-buffers", 1u32);
+
+        source.set_property("location", video_path.to_str().unwrap());
+
+        // パイプラインにエレメントを追加
+        if let Some(ref crop) = videocrop {
+            pipeline
+                .add_many(&[&source, &decodebin, &videoconvert, crop, appsink.upcast_ref::<gst::Element>()])
+                .context("エレメントの追加に失敗しました")?;
+        } else {
+            pipeline
+                .add_many(&[&source, &decodebin, &videoconvert, appsink.upcast_ref::<gst::Element>()])
+                .context("エレメントの追加に失敗しました")?;
+        }
+
+        source.link(&decodebin).context("sourceとdecoderのリンクに失敗しました")?;
+
+        // パス: decodebin -> videoconvert -> (videocrop?) -> appsink
+        if let Some(ref crop) = videocrop {
+            videoconvert
+                .link(crop)
+                .context("converterとvideocropのリンクに失敗しました")?;
+            crop.link(appsink.upcast_ref::<gst::Element>())
+                .context("videocropとsinkのリンクに失敗しました")?;
+        } else {
+            videoconvert
+                .link(appsink.upcast_ref::<gst::Element>())
+                .context("converterとsinkのリンクに失敗しました")?;
+        }
+
+        let videoconvert_clone = videoconvert.clone();
+        decodebin.connect_pad_added(move |_src, src_pad| {
+            let sink_pad = videoconvert_clone
+                .static_pad("sink")
+                .expect("videoconvertのsinkパッドが見つかりません");
+
+            if !sink_pad.is_linked() {
+                if let Err(e) = src_pad.link(&sink_pad) {
+                    eprintln!("パッドのリンクに失敗: {:?}", e);
+                }
+            }
+        });
+
+        // videocrop プロパティ設定（必要なら）
+        if let (Some(crop_elem), Some(region)) = (videocrop.as_ref(), crop_region) {
+            let left = region.x as i32;
+            let top = region.y as i32;
+            let crop_w = region.width as i32;
+            let crop_h = region.height as i32;
+            let right = (info.width as i32) - (left + crop_w);
+            let bottom = (info.height as i32) - (top + crop_h);
+            let right = if right < 0 { 0 } else { right };
+            let bottom = if bottom < 0 { 0 } else { bottom };
+
+            crop_elem.set_property("left", &left);
+            crop_elem.set_property("right", &right);
+            crop_elem.set_property("top", &top);
+            crop_elem.set_property("bottom", &bottom);
+        }
+
+        pipeline.set_state(gst::State::Playing)
+            .context("パイプラインの開始に失敗しました")?;
+
+        let bus = pipeline.bus().expect("パイプラインにバスがありません");
+        let mut frame_count = 0u32;
+        let mut processed_count = 0u32;
+
+        // フレームを同期的に処理
+        loop {
+            // バスメッセージを確認
+            if let Some(msg) = bus.pop() {
+                use gst::MessageView;
+                match msg.view() {
+                    MessageView::Eos(..) => {
+                        break;
+                    }
+                    MessageView::Error(err) => {
+                        pipeline.set_state(gst::State::Null).ok();
+                        anyhow::bail!(
+                            "エラーが発生しました: {} (デバッグ情報: {:?})",
+                            err.error(),
+                            err.debug()
+                        );
+                    }
+                    _ => (),
+                }
+            }
+
+            // フレームを取得（非ブロッキング）
+            if let Some(sample) = appsink.try_pull_sample(gst::ClockTime::from_mseconds(100)) {
+                let buffer = sample.buffer().context("バッファの取得に失敗しました")?;
+                let caps = sample.caps().context("capsの取得に失敗しました")?;
+
+                let video_info = gstreamer_video::VideoInfo::from_caps(caps)
+                    .context("VideoInfoの作成に失敗しました")?;
+
+                let map = buffer.map_readable().context("バッファのマップに失敗しました")?;
+
+                let current_frame = frame_count;
+                frame_count += 1;
+
+                if current_frame % self.config.frame_interval == 0 {
+                    let width = video_info.width() as u32;
+                    let height = video_info.height() as u32;
+
+                    let contiguous = plane_to_contiguous_rgb(&video_info, map.as_slice());
+                    let img = image::RgbImage::from_raw(width, height, contiguous)
                         .context("RgbImageの作成に失敗しました")?;
 
                     // コールバックを同期的に呼び出し（同じスレッド内）
@@ -1032,7 +1338,8 @@ impl FrameExtractor {
                     let width = video_info.width();
                     let height = video_info.height();
 
-                    if let Some(img) = image::RgbImage::from_raw(width, height, map.as_slice().to_vec()) {
+                    let contiguous = plane_to_contiguous_rgb(&video_info, map.as_slice());
+                    if let Some(img) = image::RgbImage::from_raw(width, height, contiguous) {
                         result_image = Some(img);
                         break 'outer;
                     }

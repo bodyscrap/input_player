@@ -43,13 +43,7 @@ pub enum SequenceState {
     Playing,     // 再生中
 }
 
-// シーケンスイベント（フロントエンドへの通知用）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SequenceEvent {
-    pub state: SequenceState,
-    pub current_step: usize,  // 現在のステップ（行番号）
-    pub total_steps: usize,   // 総ステップ数
-}
+// シーケンスイベントは現在未使用のため削除（Player#get_event も削除）
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

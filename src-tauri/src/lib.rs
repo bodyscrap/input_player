@@ -550,45 +550,7 @@ fn get_current_playing_frame(state: State<AppState>) -> usize {
     player.get_current_step()
 }
 
-#[tauri::command]
-fn open_editor_test(app: tauri::AppHandle, csv_path: String) -> Result<(), String> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use base64::{Engine as _, engine::general_purpose};
-
-    println!("========== open_editor_test (simple HTML) ==========");
-
-    let mut hasher = DefaultHasher::new();
-    csv_path.hash(&mut hasher);
-    let window_label = format!("test_{}", hasher.finish());
-
-    let encoded_path = general_purpose::STANDARD.encode(csv_path.as_bytes());
-    let url = format!("editor-test.html?csvPath={}", encoded_path);
-
-    let window = tauri::WebviewWindowBuilder::new(
-        &app,
-        &window_label,
-        tauri::WebviewUrl::App(url.into())
-    )
-    .title("Editor Test Window")
-    .inner_size(800.0, 600.0)
-    .visible(true)
-    .focused(true)
-    .build()
-    .map_err(|e| e.to_string())?;
-
-    #[cfg(debug_assertions)]
-    {
-        let w = window.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            w.open_devtools();
-        });
-    }
-
-    println!("✓ Test window created");
-    Ok(())
-}
+// `open_editor_test` (test helper) removed — unused in production code
 
 #[tauri::command]
 fn open_editor_window(app: tauri::AppHandle, csv_path: String) -> Result<(), String> {

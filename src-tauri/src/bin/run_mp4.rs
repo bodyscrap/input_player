@@ -10,13 +10,18 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: run_mp4 <video_path> <model_path> [backend(cpu|wgpu)]");
+        eprintln!("Usage: run_mp4 <video_path> <model_path> [backend(cpu|wgpu)] [frame_interval]");
         return;
     }
 
     let video_path = &args[1];
     let model_path = &args[2];
     let backend = if args.len() >= 4 { &args[3] } else { "cpu" };
+    let frame_interval: u32 = if args.len() >= 5 {
+        args[4].parse().unwrap_or(1)
+    } else {
+        1
+    };
 
     println!("Run MP4 test:\n  video: {}\n  model: {}\n  backend: {}", video_path, model_path, backend);
 
@@ -47,34 +52,50 @@ fn main() {
         cols: metadata.columns_per_row,
     };
 
+    // フレーム間隔はコマンドライン引数で指定可能（デフォルト: 1）
+    let out_dir_name = format!("run_mp4_tiles_{}_{}", backend, frame_interval);
     let frame_config = FrameExtractorConfig {
-        frame_interval: 1,
-        output_dir: PathBuf::from("."),
+        frame_interval,
+        output_dir: PathBuf::from(&out_dir_name),
         image_format: "png".to_string(),
         jpeg_quality: 95,
     };
 
-    let extractor = FrameExtractor::new(frame_config);
+    let extractor = FrameExtractor::new(frame_config.clone());
 
     println!("Starting frame processing...");
     let mut frame_count = 0u32;
 
-    if let Err(e) = extractor.process_frames_sync(video_path, |frame_img, frame_num| {
+    if let Err(e) = extractor.process_frames_sync_with_crop(video_path, Some(region.clone()), |frame_img, frame_num| {
         frame_count = frame_num + 1;
         println!("Processing frame {}", frame_num);
 
-        let tiles = match input_player_lib::analyzer::extract_tiles_from_image(frame_img, &region) {
+        // 事前にクロップ済みの画像上でタイルを抽出（origin は 0,0）
+        let cropped_region = input_player_lib::analyzer::InputIndicatorRegion {
+            x: 0,
+            y: 0,
+            width: region.width,
+            height: region.height,
+            rows: region.rows,
+            cols: region.cols,
+        };
+
+        let tiles = match input_player_lib::analyzer::extract_tiles_from_image(frame_img, &cropped_region) {
             Ok(t) => t,
             Err(err) => { eprintln!("extract_tiles error: {}", err); return Err(err); }
         };
 
         // バッチサイズはモデルの列数を使用
         let batch_size = engine.config().columns_per_row as usize;
-        let mut all_tiles = tiles; // Vec<image::RgbImage>
+        let all_tiles = tiles; // Vec<image::RgbImage>
+        // 保存先ディレクトリを準備
+        let _ = std::fs::create_dir_all(&frame_config.output_dir);
+
+        // 分類処理
         if batch_size == 0 {
             eprintln!("警告: batch_size が 0 です。個別分類にフォールバックします。");
-            for (i, tile) in all_tiles.into_iter().enumerate() {
-                match engine.classify_image_direct(&tile) {
+            for (i, tile) in all_tiles.iter().enumerate() {
+                match engine.classify_image_direct(tile) {
                     Ok(class_name) => println!(" frame {} tile {} => {}", frame_num, i, class_name),
                     Err(err) => println!(" classification error: {}", err),
                 }
@@ -104,6 +125,15 @@ fn main() {
                         }
                     }
                 }
+            }
+        }
+
+        // タイル画像を保存（テスト目的）
+        for (i, tile_img) in all_tiles.into_iter().enumerate() {
+            let filename = format!("frame_{:06}_tile_{}.png", frame_num, i);
+            let path = frame_config.output_dir.join(filename);
+            if let Err(e) = tile_img.save(&path) {
+                eprintln!("タイル画像の保存に失敗: {}", e);
             }
         }
 
